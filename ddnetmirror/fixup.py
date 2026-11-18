@@ -57,11 +57,28 @@ class Rule:
                 self.pattern = re.compile(self.match)
             except re.error as exc:
                 raise RuleError(f"{where} ({self.op}): invalid regex {self.match!r}: {exc}") from None
+            if self.op == "replace":
+                try:
+                    check_template(self.pattern, self.replacement)
+                except (re.error, IndexError) as exc:
+                    raise RuleError(
+                        f"{where} ({self.op}): invalid replacement {self.replacement!r}: {exc}"
+                    ) from None
 
     def matches(self, content):
         if self.regex:
             return self.pattern.search(content) is not None
         return self.match in content
+
+
+def check_template(pattern, template):
+    """Expand template against a stand-in match with the same groups as pattern,
+    so bad group references or escapes fail even if the input never matches."""
+    names = {index: name for name, index in pattern.groupindex.items()}
+    groups = "".join(
+        f"(?P<{names[i]}>)" if i in names else "()" for i in range(1, pattern.groups + 1)
+    )
+    re.compile(groups).match("").expand(template)
 
 
 def load_rules(text):
@@ -146,6 +163,9 @@ def apply_rules(rules, text, report=print):
     lines = split_lines(text)
     for rule in rules:
         lines, count = apply_rule(rule, lines)
+        # a replacement may contain line breaks: re-split so the next rule sees
+        # physical lines (every byte and ending kept as-is)
+        lines = split_lines("".join(content + ending for content, ending in lines))
         report(f"{rule.name}: {count} line(s) affected")
     return "".join(content + ending for content, ending in lines)
 

@@ -84,6 +84,22 @@ def test_rules_run_in_order_and_line_endings_are_preserved():
     assert apply(rules, text) == "hostname leaf1\r\n!\r\nend\r\nbanner motd\nEOF\n"
 
 
+def test_replacement_with_line_break_is_split_for_later_rules():
+    text = "hostname leaf1\r\n!\r\nend\r\n"
+    rules = r"""
+- {op: replace, match: '^hostname (\S+)$', with: "hostname lab-\\1\r\nmarker", regex: true}
+- {op: delete-line, match: marker}
+"""
+    assert apply(rules, text) == "hostname lab-leaf1\r\n!\r\nend\r\n"
+
+
+@pytest.mark.parametrize("template", ["\\2", "\\g<nope>", "\\g<1", "\\q"])
+def test_invalid_replacement_template_is_rejected_at_load(template):
+    rules = f"- {{op: replace, match: 'host(name)', regex: true, with: '{template}'}}"
+    with pytest.raises(fixup.RuleError, match=r"rule 1 \(replace\): invalid replacement"):
+        fixup.load_rules(rules)
+
+
 def test_realistic_config_combining_all_operations():
     before = """\
 ! Command: show running-config
@@ -170,6 +186,7 @@ def test_cli_writes_new_owner_only_file_and_keeps_original(tmp_path):
         ("- {op: replace, match: x}", "missing with"),
         ("- {op: delete-line, match: x, regx: true}", "unknown field regx"),
         ("rules: [", "not valid YAML"),
+        ("- {op: replace, match: 'x(y)', with: '\\2', regex: true}", "invalid replacement"),
     ],
 )
 def test_bad_rule_file_fails_without_output(tmp_path, capsys, rules, message):
