@@ -108,7 +108,12 @@ def find_links(hostnames, lldp):
 
 
 def report_links(grpc_addr, token, ca_file, devices):
-    """Query LLDP for devices [(hostname, serial)] and print the link report."""
+    """Query LLDP for devices [(hostname, serial)] and print the link report.
+
+    Returns (links, available): available is False when no device returned any
+    LLDP data (every query failed or came back empty), so an empty link list
+    cannot be mistaken for "no neighbors".
+    """
     hostnames = [h for h, _ in devices]
     lldp = {}
     with GRPCClient(grpc_addr, tokenValue=token, ca=ca_file) as client:
@@ -126,3 +131,4 @@ def report_links(grpc_addr, token, ca_file, devices):
         print(f"{shown(ah)} {shown(ai)} <-> {shown(bh)} {shown(bi)} [{kind}]")
     for reason in skipped:
         print(f"skipped LLDP: {reason}", file=sys.stderr)
+    return links, any(data is not None for data in lldp.values())

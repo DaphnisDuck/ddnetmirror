@@ -11,7 +11,7 @@ from cloudvision.api.arista.tag import v2 as tag
 from cloudvision.api.client import AsyncCVClient
 from cloudvision.compliance.client import ComplianceClient
 
-from ddnetmirror import lldp
+from ddnetmirror import lldp, topology
 
 TOKEN_ENV = "CLOUDVISION_TOKEN"
 RPC_TIMEOUT = 30
@@ -121,6 +121,15 @@ def parse_tag(text):
     return label, value
 
 
+def parse_lab_name(text):
+    if not topology.valid_name(text):
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is not a valid Containerlab lab name "
+            "(letters, digits, '.', '_', '-'; must start with a letter or digit)"
+        )
+    return text
+
+
 def parse_server(server):
     host, sep, port = server.rpartition(":")
     if not sep:
@@ -148,7 +157,11 @@ def run(args):
     server = f"{host}:{port}"
 
     if args.output_dir:
-        return collect_tag(conn, server, ca_bytes, args.tag, args.output_dir, args.lldp)
+        lab = None
+        if args.lab_name:
+            lab = (args.lab_name, args.image)
+            ensure_absent(topology_path(args.output_dir, args.lab_name))
+        return collect_tag(conn, server, ca_bytes, args.tag, args.output_dir, args.lldp, lab)
 
     if by_hostname:
         device_filter = inventory.Device(hostname=args.hostname)
@@ -179,12 +192,18 @@ def fetch_and_write(server, token, ca_bytes, device, name, output):
     print(f"wrote running config for {name} ({serial}, EOS {version}) to {output}")
 
 
-def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=False):
+def topology_path(output_dir, lab_name):
+    return os.path.join(output_dir, f"{lab_name}.clab.yml")
+
+
+def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=False, lab=None):
     """Collect every device with the tag into output_dir, sequentially.
 
     Successes are kept; each failed device is reported and the rest continue.
-    Returns True only if every device was collected. With report_lldp, also
-    prints LLDP links between the found devices (problems there are non-fatal).
+    Returns True only if every device was collected (and, with lab, the topology
+    was written). With report_lldp, also prints LLDP links between the found
+    devices (problems there are non-fatal). lab=(name, image) also writes a
+    Containerlab topology for the saved configs (requires report_lldp).
     """
     label, value = selected_tag
     token = conn[2]
@@ -197,6 +216,7 @@ def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=Fa
         print(f"failed: {name}: {reason}", file=sys.stderr)
 
     found = []
+    saved = {}  # name -> device, for configs written in this run
     for device_id in device_ids:
         try:
             device = find_tagged_device(*conn, label, value, device_id)
@@ -216,6 +236,7 @@ def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=Fa
             output = os.path.join(output_dir, f"{name}.cfg")
             ensure_absent(output)
             fetch_and_write(server, token, ca_bytes, device, name, output)
+            saved[name] = device
             written += 1
         except (FetchError, OSError) as exc:
             fail(label_for_report, exc)
@@ -224,6 +245,7 @@ def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=Fa
         f"collected {written} of {len(device_ids)} devices with tag {label}={value} "
         f"into {output_dir}; {len(failures)} failed"
     )
+    links, lldp_available = None, False
     if report_lldp:
         devices = []
         for _, device in found:
@@ -232,10 +254,66 @@ def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=Fa
             else:
                 print(f"skipped LLDP: {device.key.device_id}: no inventory hostname", file=sys.stderr)
         try:
-            lldp.report_links(server, token, conn[3], devices)
+            links, lldp_available = lldp.report_links(server, token, conn[3], devices)
         except Exception as exc:
             print(f"LLDP report unavailable: {exc}", file=sys.stderr)
+    if lab:
+        written_topology = write_topology(
+            output_dir, lab, selected_tag, len(device_ids), saved, links, lldp_available
+        )
+        return written_topology and not failures
     return not failures
+
+
+def write_topology(output_dir, lab, selected_tag, total, saved, links, lldp_available):
+    """Write <lab>.clab.yml for the saved configs; return True if written."""
+    lab_name, image = lab
+
+    def refuse(reason):
+        print(f"error: topology not written: {reason}", file=sys.stderr)
+        return False
+
+    if links is None or not lldp_available:
+        return refuse("LLDP data unavailable for every device")
+    if not saved:
+        return refuse("no device config was saved")
+    bad = sorted(
+        n for n, d in saved.items() if not d.hostname or not topology.valid_name(n)
+    )
+    if bad:
+        return refuse(
+            "not valid Containerlab node names (inventory hostnames are used as-is): "
+            + ", ".join(lldp.shown(n) for n in bad)
+        )
+    reserved = sorted(n for n in saved if topology.reserved_node_name(n))
+    if reserved:
+        return refuse(
+            "hostnames reserved by Containerlab link endpoints "
+            f"({', '.join(sorted(topology.RESERVED_NODE_NAMES))}, any case): "
+            + ", ".join(reserved)
+        )
+    label, value = selected_tag
+    complete = len(saved) == total
+    header = [
+        f"Generated by ddnetmirror from tag {lldp.shown(label)}={lldp.shown(value)}: "
+        f"{len(saved)} of {total} devices collected."
+    ]
+    if not complete:
+        header.append(
+            "INCOMPLETE: devices without a saved config, and their links, are missing."
+        )
+    nodes = {name: f"{name}.cfg" for name in saved}
+    text, omitted = topology.build(lab_name, image, nodes, links, header)
+    for reason in omitted:
+        print(f"omitted link: {reason}", file=sys.stderr)
+    path = topology_path(output_dir, lab_name)
+    write_new_file(path, text)
+    print(f"wrote Containerlab topology {path} ({len(nodes)} nodes, "
+          f"{len(links) - len(omitted)} links)")
+    if not complete:
+        print(f"warning: {path} is INCOMPLETE: only {len(saved)} of {total} devices",
+              file=sys.stderr)
+    return True
 
 
 def main(argv=None):
@@ -259,11 +337,21 @@ def main(argv=None):
         action="store_true",
         help="with --output-dir: also report LLDP links between the collected devices",
     )
+    parser.add_argument(
+        "--lab-name",
+        type=parse_lab_name,
+        help="with --lldp: also write a Containerlab topology DIR/<NAME>.clab.yml",
+    )
+    parser.add_argument("--image", help="cEOS image for every topology node (with --lab-name)")
     args = parser.parse_args(argv)
     if args.output_dir and args.tag is None:
         parser.error("--output-dir requires --tag")
     if args.lldp and not args.output_dir:
         parser.error("--lldp requires --tag and --output-dir")
+    if bool(args.lab_name) != bool(args.image):
+        parser.error("--lab-name and --image must be given together")
+    if args.lab_name and not args.lldp:
+        parser.error("--lab-name requires --tag, --output-dir and --lldp")
     try:
         complete = run(args)
     except (FetchError, OSError) as exc:
