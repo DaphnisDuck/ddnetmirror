@@ -47,6 +47,14 @@ def remote_endpoint(fields):
     return None
 
 
+def shown(value):
+    """Escape control characters (C0, DEL, C1) in an LLDP value for display."""
+    return "".join(
+        f"\\x{ord(c):02x}" if ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F else c
+        for c in str(value)
+    )
+
+
 def find_links(hostnames, lldp):
     """Build unique links between selected devices.
 
@@ -64,19 +72,20 @@ def find_links(hostnames, lldp):
             continue
         _, neighbors = data
         for (port, _), fields in sorted(neighbors.items(), key=lambda kv: str(kv[0])):
-            where = f"{host} {port}"
+            where = f"{host} {shown(port)}"
             remote = remote_endpoint(fields)
-            if not isinstance(port, str) or remote is None:
+            if not isinstance(port, str) or not port or remote is None:
                 skipped.append(f"{where}: neighbor without sysName/port id")
                 continue
             name, remote_port = remote
             if name in ambiguous:
-                skipped.append(f"{where} -> {name}: ambiguous hostname")
+                skipped.append(f"{where} -> {shown(name)}: ambiguous hostname")
             elif name not in lldp:
-                skipped.append(f"{where} -> {name} {remote_port}: not in selection")
+                skipped.append(f"{where} -> {shown(name)} {shown(remote_port)}: not in selection")
             elif lldp[name] is None or remote_port not in lldp[name][0]:
                 skipped.append(
-                    f"{where} -> {name} {remote_port}: not an LLDP interface reported by {name}"
+                    f"{where} -> {name} {shown(remote_port)}: "
+                    f"not an LLDP interface reported by {name}"
                 )
             else:
                 observed.add(((host, port), (name, remote_port)))
@@ -89,7 +98,9 @@ def find_links(hostnames, lldp):
     links = []
     for a, b in sorted(pairs):
         if use[a] > 1 or use[b] > 1:
-            skipped.append(f"{a[0]} {a[1]} <-> {b[0]} {b[1]}: interface seen in several links")
+            skipped.append(
+                f"{a[0]} {shown(a[1])} <-> {b[0]} {shown(b[1])}: interface seen in several links"
+            )
             continue
         kind = "reciprocal" if (a, b) in observed and (b, a) in observed else "one-sided"
         links.append((a, b, kind))

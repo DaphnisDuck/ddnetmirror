@@ -438,6 +438,7 @@ def test_lldp_reports_reciprocal_and_one_sided_links_once(batch, capsys):
         ("out_of_scope", "leaf1 Ethernet3 -> host7 eth0: not in selection"),
         ("ambiguous", "leaf1 Ethernet1 -> spine1: ambiguous hostname"),
         ("missing_port_id", "leaf1 Ethernet1: neighbor without sysName/port id"),
+        ("empty_local_port", "leaf1 : neighbor without sysName/port id"),
         ("port_id_not_interface", "not an LLDP interface reported by spine1"),
         ("unavailable", "spine1: LLDP data unavailable"),
         ("query_error", "spine1: LLDP data unavailable"),
@@ -449,6 +450,7 @@ def test_lldp_never_turns_unclear_observations_into_links(batch, capsys, case, r
     leaf1 = {
         "out_of_scope": [nbr("Ethernet3", "host7", "eth0")],
         "missing_port_id": [nbr("Ethernet1", "spine1", "")],
+        "empty_local_port": [nbr("", "spine1", "Ethernet49/1")],
         "port_id_not_interface": [nbr("Ethernet1", "spine1", "001c.73aa.bbcc")],
     }.get(case, [to_spine])
     batch["lldp"] = {"SN1": leaf1, "SN3": spine}
@@ -459,9 +461,38 @@ def test_lldp_never_turns_unclear_observations_into_links(batch, capsys, case, r
     if case == "query_error":
         batch["lldp"]["SN3"] = RuntimeError("unavailable")
 
-    run_lldp()
+    # LLDP problems never change the exit status; "ambiguous" fails its config writes.
+    assert run_lldp() == (1 if case == "ambiguous" else 0)
 
     out = capsys.readouterr()
     assert "LLDP links between selected devices: 0" in out.out
     assert "<->" not in out.out
     assert reason in out.err
+
+
+def test_lldp_skips_links_sharing_an_interface(batch, capsys):
+    batch["lldp"] = {
+        "SN1": [nbr("Ethernet1", "spine1", "Ethernet49/1"), nbr("Ethernet2", "spine1", "Ethernet50/1")],
+        "SN2": [nbr("Ethernet12", "spine1", "Ethernet49/1")],
+        "SN3": [port("Ethernet49/1"), port("Ethernet50/1")],
+    }
+
+    assert run_lldp() == 0
+
+    out = capsys.readouterr()
+    assert out.out.splitlines()[-2:] == [
+        "LLDP links between selected devices: 1",
+        "leaf1 Ethernet2 <-> spine1 Ethernet50/1 [one-sided]",
+    ]
+    assert "leaf1 Ethernet1 <-> spine1 Ethernet49/1: interface seen in several links" in out.err
+    assert "leaf2 Ethernet12 <-> spine1 Ethernet49/1: interface seen in several links" in out.err
+
+
+def test_lldp_diagnostics_escape_control_characters(batch, capsys):
+    batch["lldp"] = {"SN1": [nbr("Ethernet3", "evil\n\x1b[31mhost", "eth0")]}
+
+    run_lldp()
+
+    err = capsys.readouterr().err
+    assert "evil\\x0a\\x1b[31mhost eth0: not in selection" in err
+    assert "\x1b" not in err
