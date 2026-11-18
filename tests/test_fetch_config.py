@@ -1,4 +1,6 @@
 import contextlib
+import os
+import stat
 
 import pytest
 from cloudvision.api.arista.inventory import v1 as inventory
@@ -107,6 +109,47 @@ def test_existing_output_is_not_overwritten(cv, tmp_path):
     assert run() == 1
 
     assert existing.read_text() == "keep me"
+
+
+def test_output_is_owner_only(cv, tmp_path):
+    cv["result"]["config"] = "hostname leaf1\n"
+    old_umask = os.umask(0o022)
+    try:
+        assert run() == 0
+    finally:
+        os.umask(old_umask)
+
+    assert stat.S_IMODE((tmp_path / "leaf1.cfg").stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("partial_write", [False, True])
+def test_write_or_close_failure_leaves_no_file(cv, monkeypatch, tmp_path, partial_write):
+    cv["result"]["config"] = "hostname leaf1\n"
+    real_fdopen = os.fdopen
+
+    class FailingFile:
+        def __init__(self, fd, mode):
+            self.f = real_fdopen(fd, mode)
+
+        def __enter__(self):
+            return self
+
+        def write(self, data):
+            if partial_write:
+                self.f.write(data[:3])
+                self.f.flush()
+                raise OSError("disk full")
+            self.f.write(data)
+
+        def __exit__(self, *exc):
+            self.f.close()
+            raise OSError("close failed")
+
+    monkeypatch.setattr(fetch_config.os, "fdopen", FailingFile)
+
+    assert run() == 1
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_missing_token_fails(cv, monkeypatch, tmp_path):

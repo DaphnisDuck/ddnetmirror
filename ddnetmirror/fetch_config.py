@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import contextlib
 import os
 import sys
 
@@ -55,18 +56,22 @@ def fetch_running_config(server, token, ca_bytes, serial):
 
 
 def write_new_file(path, text):
-    """Write text as UTF-8 without any changes; refuse to overwrite."""
+    """Write text as UTF-8 without any changes to a new owner-only file.
+
+    Refuses to overwrite. If writing or closing fails, removes the file it created.
+    """
     data = text.encode("utf-8")
     try:
-        with open(path, "xb") as f:
-            try:
-                f.write(data)
-            except BaseException:
-                f.close()
-                os.unlink(path)
-                raise
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         raise FetchError(f"{path} already exists; not overwriting") from None
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+        raise
 
 
 def parse_server(server):
