@@ -146,6 +146,11 @@ def run(args):
     serial = device.key.device_id
     name = args.hostname if by_hostname else (device.hostname or serial)
     if not output:
+        separators = {"/", "\0", os.sep, os.altsep} - {None}
+        if name in (".", "..") or any(c in name for c in separators):
+            raise FetchError(
+                f"inventory hostname {name!r} is not a safe file name; pass --output"
+            )
         output = f"{name}.cfg"
         ensure_absent(output)
     version = device.software_version or "unknown"

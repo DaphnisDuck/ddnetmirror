@@ -18,6 +18,7 @@ def cv(monkeypatch, tmp_path):
     state = {
         "serials": ["SN1"],
         "version": None,
+        "hostname": "leaf1",
         "tagged": [],
         "tag_filters": [],
         "result": {"config": "", "errors": [], "filter_codes": [], "sources": []},
@@ -35,7 +36,7 @@ def cv(monkeypatch, tmp_path):
                 yield inventory.DeviceStreamResponse(
                     value=inventory.Device(
                         key=inventory.DeviceKey(device_id=serial),
-                        hostname="leaf1",
+                        hostname=state["hostname"],
                         software_version=state["version"],
                     )
                 )
@@ -222,6 +223,32 @@ def test_no_or_multiple_tagged_devices_write_nothing(cv, tmp_path, capsys, tagge
 
     assert list(tmp_path.iterdir()) == []
     assert "role=leaf" in capsys.readouterr().err
+    assert cv["compliance_calls"] == []
+
+
+def test_tag_rejects_unsafe_inventory_hostname(cv, tmp_path, capsys):
+    (tmp_path / "work").mkdir()
+    os.chdir(tmp_path / "work")
+    cv["tagged"] = ["SN1"]
+    cv["hostname"] = "../escaped"
+    cv["result"]["config"] = "hostname leaf1\n"
+
+    assert run(selector=("--tag", "role=leaf")) == 1
+
+    assert "--output" in capsys.readouterr().err
+    assert sorted(p.name for p in tmp_path.rglob("*")) == ["work"]
+    assert cv["compliance_calls"] == []
+
+
+def test_tag_does_not_overwrite_default_output(cv, tmp_path):
+    existing = tmp_path / "leaf1.cfg"
+    existing.write_text("keep me")
+    cv["tagged"] = ["SN1"]
+    cv["result"]["config"] = "hostname leaf1\n"
+
+    assert run(selector=("--tag", "role=leaf")) == 1
+
+    assert existing.read_text() == "keep me"
     assert cv["compliance_calls"] == []
 
 
