@@ -13,12 +13,17 @@ TOKEN = "secret-token-value"
 
 @pytest.fixture
 def cv(monkeypatch, tmp_path):
-    """Stub CloudVision: `serials`/`version` for inventory, `tagged` device_ids for
-    tag assignments, `result` for get_config."""
+    """Stub CloudVision: `serials`/`version`/`hostname` for inventory (`hostnames`,
+    `versions` override per serial), `tagged` device_ids for tag assignments,
+    `result` for get_config (`results` override per serial)."""
     state = {
         "serials": ["SN1"],
         "version": None,
         "hostname": "leaf1",
+        "hostnames": {},
+        "versions": {},
+        "results": {},
+        "config_ids": [],
         "tagged": [],
         "tag_filters": [],
         "result": {"config": "", "errors": [], "filter_codes": [], "sources": []},
@@ -32,12 +37,15 @@ def cv(monkeypatch, tmp_path):
 
         async def get_all(self, request, timeout=None):
             state["filters"].extend(request.partial_eq_filter)
+            wanted = request.partial_eq_filter[0].key.device_id
             for serial in state["serials"]:
+                if wanted is not None and wanted != serial:
+                    continue
                 yield inventory.DeviceStreamResponse(
                     value=inventory.Device(
                         key=inventory.DeviceKey(device_id=serial),
-                        hostname=state["hostname"],
-                        software_version=state["version"],
+                        hostname=state["hostnames"].get(serial, state["hostname"]),
+                        software_version=state["versions"].get(serial, state["version"]),
                     )
                 )
 
@@ -63,7 +71,8 @@ def cv(monkeypatch, tmp_path):
             pass
 
         def get_config(self, device_id):
-            return state["result"]
+            state["config_ids"].append(device_id)
+            return state["results"].get(device_id, state["result"])
 
     monkeypatch.setattr(
         fetch_config.AsyncCVClient,
@@ -259,6 +268,8 @@ def test_tag_does_not_overwrite_default_output(cv, tmp_path):
         ("--tag", "=leaf"),
         ("--tag", "role="),
         ("--hostname", "leaf1", "--tag", "role=leaf"),
+        ("--hostname", "leaf1", "--output-dir", "configs"),
+        ("--tag", "role=leaf", "--output", "x.cfg", "--output-dir", "configs"),
         (),
     ],
 )
@@ -268,3 +279,84 @@ def test_bad_selector_is_rejected(cv, tmp_path, selector):
 
     assert exc.value.code == 2
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.fixture
+def batch(cv):
+    """Three devices tagged site=lab, each with its own config."""
+    cv["serials"] = cv["tagged"] = ["SN1", "SN2", "SN3"]
+    cv["hostnames"] = {"SN1": "leaf1", "SN2": "leaf2", "SN3": "spine1"}
+    cv["versions"] = {"SN1": "4.32.1F", "SN2": "4.31.0F"}
+    for serial in cv["serials"]:
+        cv["results"][serial] = {"config": f"! {serial} café\r\nend", "errors": []}
+    return cv
+
+
+def run_batch():
+    return run(selector=("--tag", "site=lab", "--output-dir", "configs"))
+
+
+def test_batch_collects_every_tagged_device(batch, tmp_path, capsys):
+    assert run_batch() == 0
+
+    for serial, name in batch["hostnames"].items():
+        path = tmp_path / "configs" / f"{name}.cfg"
+        assert path.read_bytes() == f"! {serial} café\r\nend".encode("utf-8")
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    out = capsys.readouterr().out
+    assert "leaf1 (SN1, EOS 4.32.1F)" in out
+    assert "spine1 (SN3, EOS unknown)" in out
+    assert "collected 3 of 3" in out
+
+
+def test_batch_keeps_successes_when_one_device_fails(batch, tmp_path, capsys):
+    batch["results"]["SN2"] = {"config": "partial", "errors": ["gRPC error: unavailable"]}
+
+    assert run_batch() == 1
+
+    assert sorted(p.name for p in (tmp_path / "configs").iterdir()) == ["leaf1.cfg", "spine1.cfg"]
+    out = capsys.readouterr()
+    assert "leaf2 (SN2)" in out.err and "unavailable" in out.err
+    assert "collected 2 of 3" in out.out and "1 failed" in out.out
+
+
+def test_batch_with_no_tagged_devices_fails(batch, tmp_path, capsys):
+    batch["tagged"] = []
+
+    assert run_batch() == 1
+
+    assert list(tmp_path.iterdir()) == []
+    assert "no device with tag site=lab" in capsys.readouterr().err
+
+
+def test_batch_never_overwrites_existing_file(batch, tmp_path, capsys):
+    (tmp_path / "configs").mkdir()
+    existing = tmp_path / "configs" / "leaf2.cfg"
+    existing.write_text("keep me")
+
+    assert run_batch() == 1
+
+    assert existing.read_text() == "keep me"
+    assert "SN2" not in batch["config_ids"]
+    assert (tmp_path / "configs" / "spine1.cfg").exists()
+
+
+@pytest.mark.parametrize(
+    "hostnames, rejected",
+    [
+        ({"SN2": "../escaped"}, ["SN2"]),
+        ({"SN2": "leaf1"}, ["SN1", "SN2"]),
+    ],
+)
+def test_batch_rejects_unsafe_or_colliding_names(batch, tmp_path, capsys, hostnames, rejected):
+    batch["hostnames"].update(hostnames)
+
+    assert run_batch() == 1
+
+    assert not any(serial in batch["config_ids"] for serial in rejected)
+    assert (tmp_path / "configs" / "spine1.cfg").exists()
+    assert sorted(p.name for p in tmp_path.rglob("*.cfg")) == sorted(
+        f"{batch['hostnames'][s]}.cfg" for s in batch["serials"] if s not in rejected
+    )
+    err = capsys.readouterr().err
+    assert all(f"({serial})" in err for serial in rejected)
