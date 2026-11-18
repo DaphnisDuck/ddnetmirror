@@ -33,7 +33,13 @@ Do not add semantic EOS parsers, config classification, automated config repair,
 
 ## Planning authority
 
-**GitHub Issues are the authoritative record** of planning, decisions, assignments, and status. Do not create Markdown backlogs, trackers, or other competing sources of authority. Keep docs concise. Work goes through branches and PRs linked to issues; don't commit directly to `main`.
+**GitHub is the source of truth for planning, progress, decisions, and development history.** Issues are authoritative for planning and decisions; the repository's code and docs are authoritative for implemented behavior.
+
+- Every development assignment has a GitHub Issue. Requirements, scope, acceptance criteria, owner decisions, and changes in direction live there.
+- Record significant findings, blockers, decisions, test results, and completion evidence in issue comments. Routine commands, trivial details, and chatter don't need comments.
+- PRs reference their issues and carry implementation and review evidence. Keep issue status accurate.
+- Conversations, local notes, and temp files are never a competing source of planning. A fresh Dispatcher must be able to rebuild status, open work, and approved decisions from GitHub alone.
+- No Markdown backlogs, parallel trackers, or elaborate reporting. Keep docs and updates concise. Work goes through branches and PRs; don't commit directly to `main`.
 
 ## Roles
 
