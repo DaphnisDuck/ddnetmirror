@@ -45,8 +45,8 @@ def find_device(host, port, token, ca_file, device_filter, described):
     return devices[0]
 
 
-def find_tagged_device_id(host, port, token, ca_file, label, value):
-    """Return the device_id of the single device assigned tag label=value."""
+def find_tagged_device_ids(host, port, token, ca_file, label, value):
+    """Return the sorted distinct device_ids assigned tag label=value (at least one)."""
     key = tag.TagAssignmentKey(
         workspace_id="",  # merged (mainline) assignments
         element_type=tag.ElementType.DEVICE,
@@ -63,11 +63,13 @@ def find_tagged_device_id(host, port, token, ca_file, label, value):
     device_ids = sorted({a.key.device_id for a in assignments})
     if not device_ids:
         raise FetchError(f"no device with tag {label}={value}")
-    if len(device_ids) > 1:
-        raise FetchError(
-            f"{len(device_ids)} devices with tag {label}={value}: {', '.join(device_ids)}"
-        )
-    return device_ids[0]
+    return device_ids
+
+
+def find_tagged_device(host, port, token, ca_file, label, value, device_id):
+    device_filter = inventory.Device(key=inventory.DeviceKey(device_id=device_id))
+    described = f"device_id {device_id!r} (tag {label}={value})"
+    return find_device(host, port, token, ca_file, device_filter, described)
 
 
 def fetch_running_config(server, token, ca_bytes, serial):
@@ -104,6 +106,12 @@ def ensure_absent(path):
         raise FetchError(f"{path} already exists; not overwriting")
 
 
+def check_safe_name(name, hint):
+    separators = {"/", "\0", os.sep, os.altsep} - {None}
+    if name in (".", "..") or any(c in name for c in separators):
+        raise FetchError(f"inventory hostname {name!r} is not a safe file name{hint}")
+
+
 def parse_tag(text):
     label, sep, value = text.partition("=")
     if not (sep and label and value):
@@ -121,6 +129,7 @@ def parse_server(server):
 
 
 def run(args):
+    """Return True if every selected device was collected."""
     token = os.environ.get(TOKEN_ENV, "").strip()
     if not token:
         raise FetchError(f"{TOKEN_ENV} is not set")
@@ -133,52 +142,113 @@ def run(args):
     if args.ca_file:
         with open(args.ca_file, "rb") as f:
             ca_bytes = f.read()
+    conn = (host, port, token, args.ca_file)
+    server = f"{host}:{port}"
+
+    if args.output_dir:
+        return collect_tag(conn, server, ca_bytes, args.tag, args.output_dir)
 
     if by_hostname:
         device_filter = inventory.Device(hostname=args.hostname)
-        described = f"hostname {args.hostname!r}"
+        device = find_device(*conn, device_filter, f"hostname {args.hostname!r}")
     else:
         label, value = args.tag
-        device_id = find_tagged_device_id(host, port, token, args.ca_file, label, value)
-        device_filter = inventory.Device(key=inventory.DeviceKey(device_id=device_id))
-        described = f"device_id {device_id!r} (tag {label}={value})"
-    device = find_device(host, port, token, args.ca_file, device_filter, described)
+        device_ids = find_tagged_device_ids(*conn, label, value)
+        if len(device_ids) > 1:
+            raise FetchError(
+                f"{len(device_ids)} devices with tag {label}={value}: {', '.join(device_ids)}"
+            )
+        device = find_tagged_device(*conn, label, value, device_ids[0])
     serial = device.key.device_id
     name = args.hostname if by_hostname else (device.hostname or serial)
     if not output:
-        separators = {"/", "\0", os.sep, os.altsep} - {None}
-        if name in (".", "..") or any(c in name for c in separators):
-            raise FetchError(
-                f"inventory hostname {name!r} is not a safe file name; pass --output"
-            )
+        check_safe_name(name, "; pass --output")
         output = f"{name}.cfg"
         ensure_absent(output)
+    fetch_and_write(server, token, ca_bytes, device, name, output)
+    return True
+
+
+def fetch_and_write(server, token, ca_bytes, device, name, output):
+    serial = device.key.device_id
     version = device.software_version or "unknown"
-    config = fetch_running_config(f"{host}:{port}", token, ca_bytes, serial)
+    config = fetch_running_config(server, token, ca_bytes, serial)
     write_new_file(output, config)
+    print(f"wrote running config for {name} ({serial}, EOS {version}) to {output}")
+
+
+def collect_tag(conn, server, ca_bytes, selected_tag, output_dir):
+    """Collect every device with the tag into output_dir, sequentially.
+
+    Successes are kept; each failed device is reported and the rest continue.
+    Returns True only if every device was collected.
+    """
+    label, value = selected_tag
+    token = conn[2]
+    device_ids = find_tagged_device_ids(*conn, label, value)
+    os.makedirs(output_dir, exist_ok=True)
+    failures = []
+
+    def fail(name, reason):
+        failures.append(name)
+        print(f"failed: {name}: {reason}", file=sys.stderr)
+
+    found = []
+    for device_id in device_ids:
+        try:
+            device = find_tagged_device(*conn, label, value, device_id)
+        except FetchError as exc:
+            fail(device_id, exc)
+            continue
+        found.append((device.hostname or device.key.device_id, device))
+
+    names = [name for name, _ in found]
+    written = 0
+    for name, device in found:
+        label_for_report = f"{name} ({device.key.device_id})"
+        try:
+            check_safe_name(name, "")
+            if names.count(name) > 1:
+                raise FetchError(f"hostname {name!r} is shared by several tagged devices")
+            output = os.path.join(output_dir, f"{name}.cfg")
+            ensure_absent(output)
+            fetch_and_write(server, token, ca_bytes, device, name, output)
+            written += 1
+        except (FetchError, OSError) as exc:
+            fail(label_for_report, exc)
+
     print(
-        f"wrote running config for {name} ({serial}, EOS {version}) to {output}"
+        f"collected {written} of {len(device_ids)} devices with tag {label}={value} "
+        f"into {output_dir}; {len(failures)} failed"
     )
+    return not failures
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Fetch one device's running config from CloudVision "
-        f"and save it unchanged. The service-account token is read from {TOKEN_ENV}."
+        description="Fetch running configs from CloudVision and save them unchanged. "
+        f"The service-account token is read from {TOKEN_ENV}."
     )
     parser.add_argument("--server", required=True, help="CloudVision host[:port] (default port 443)")
     selector = parser.add_mutually_exclusive_group(required=True)
     selector.add_argument("--hostname", help="device hostname as shown in CloudVision inventory")
-    selector.add_argument("--tag", type=parse_tag, metavar="KEY=VALUE", help="device tag assigned to exactly one device")
+    selector.add_argument("--tag", type=parse_tag, metavar="KEY=VALUE", help="device tag; must match exactly one device unless --output-dir is given")
     parser.add_argument("--ca-file", help="PEM CA bundle for on-prem CVP with a private CA")
-    parser.add_argument("--output", help="output file (default: <device hostname>.cfg); never overwritten")
+    outputs = parser.add_mutually_exclusive_group()
+    outputs.add_argument("--output", help="output file (default: <device hostname>.cfg); never overwritten")
+    outputs.add_argument(
+        "--output-dir",
+        help="with --tag: collect every device with the tag into DIR as <hostname>.cfg",
+    )
     args = parser.parse_args(argv)
+    if args.output_dir and args.tag is None:
+        parser.error("--output-dir requires --tag")
     try:
-        run(args)
+        complete = run(args)
     except (FetchError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    return 0
+    return 0 if complete else 1
 
 
 if __name__ == "__main__":
