@@ -41,4 +41,11 @@ Do not add semantic EOS parsers, config classification, automated config repair,
 - **Writer** (Claude Opus 5.5): implements narrowly scoped assignments with proportional tests; keeps changes focused and understandable; reports anything that exceeds the assignment's boundary.
 - **Reviewer** (Codex GPT-6.1 Sol, high): independently reviews correctness, maintainability, scope, and test value; calls out needless abstraction and unnecessary tests; separates real defects from theoretical improvements; does not expand the project.
 
+## Review policy
+
+- **Codex (Reviewer) is the primary independent reviewer.** It checks correctness, scope, maintainability, and proportional testing, and classifies each finding as *fix*, *dispute*, *defer*, or *owner decision*. Writer fixes confirmed in-scope defects; Reviewer verifies the fixes. No further review rounds unless unresolved substantive defects or regressions justify one.
+- **Greptile is the second opinion.** Before merging any application PR, read Greptile's actual findings (not just its check status), evaluate substantive ones with Codex, fix confirmed in-scope defects through the normal Writer/Reviewer flow, and note the disposition of meaningful findings in the PR.
+- **Budget: one Greptile review per PR.** Check for an automatic or pending review before requesting one, and prefer it to run after Codex review has stabilized the change. Don't retrigger just because new commits were pushed; more reviews need explicit owner (or G-Dawg) authorization. Never buy review credits or add paid services.
+- A Greptile review of an older commit is not evidence that newer changes were reviewed. Judge the actual delta and escalate if another independent review is materially needed. Codex normally verifies fixes made after Greptile's review.
+
 Do not start work until the Dispatcher assigns it. Do not search for or reuse any retired predecessor implementation, repository, or conversation history; this project stands on its own requirements.
