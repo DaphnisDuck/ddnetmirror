@@ -27,3 +27,32 @@ Looks the device up by hostname in the CloudVision inventory, or by a `tag.v2` d
 `--lab-name NAME --image IMAGE` (together, with `--lldp`) writes `DIR/NAME.clab.yml`. It has one `arista_ceos` node per saved config, named by the inventory hostname exactly as-is. Each node's `startup-config` is a path relative to the topology file (for example `leaf1.cfg`). Links come only from accepted LLDP links between saved devices, with interfaces converted mechanically (`Ethernet49/1` → `eth49_1`). A link whose interface can't be converted is left out and reported. Configs are never modified, including their `hostname` lines. If some devices failed, the topology is marked `INCOMPLETE` in its header and the exit status is non-zero. An existing topology file is never overwritten. Deploy it with `sudo containerlab deploy -t DIR/NAME.clab.yml`.
 
 **Live CVP/CVaaS compatibility is unverified.** This has been tested only against stubbed responses (`.venv/bin/pytest`).
+
+## Text fixups
+
+`ddnetmirror-fixup INPUT --rules RULES.yml --output OUTPUT` applies operator-defined text rules to a copy of a config. The input is never modified. The output is a new file (mode 0600) that is never overwritten, and nothing is written if a rule file or the input is bad. This is plain line-based text editing. ddnetmirror does not interpret EOS.
+
+The rule file is a YAML list. Rules run in order, and each sees the previous rule's output. Every rule has an `op`, a `match` (a literal substring, or a Python regex when `regex: true`) and, depending on the op:
+
+| op | effect |
+|---|---|
+| `replace` | in every line, replace `match` with `with` (regex: `re.sub`, so `\1` works) |
+| `delete-line` | remove matching lines only (their indented children stay) |
+| `delete-block` | remove each matching line and the following more-indented lines. The block ends at the next non-blank line with equal or lesser indentation, so an unindented `!` ends it and is kept. Indented `!` lines inside the block are removed, as are blank lines between its lines. |
+| `insert-if-missing` | if no line matches, append `text` exactly as given (including any `!` lines) at the end of the file |
+
+```yaml
+- {op: replace, match: '^hostname (\S+)$', with: 'hostname lab-\1', regex: true}
+- {op: delete-line, match: '^end$', regex: true}
+- {op: delete-block, match: daemon TerminAttr}
+- op: insert-if-missing
+  match: '^interface Management0$'
+  regex: true
+  text: |
+    interface Management0
+       description lab management
+    !
+- {op: insert-if-missing, match: '^end$', regex: true, text: "end\n"}
+```
+
+Matching is per line, without the line ending. Line endings and all untouched text are kept byte for byte, and a missing final newline stays missing unless text is appended. `!` separators are never added, removed or collapsed except by the rules above. Inserted text is used verbatim, including its LF line endings. Because a running config ends with `end`, the example deletes `end`, appends the fragment, then appends `end` again. In a cEOS 4.35.7.2M smoke test, a fragment appended after `end` was also applied, but keeping `end` last keeps the file conventional.
