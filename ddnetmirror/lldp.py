@@ -84,8 +84,8 @@ def find_links(hostnames, lldp):
                 skipped.append(f"{where} -> {shown(name)} {shown(remote_port)}: not in selection")
             elif lldp[name] is None or remote_port not in lldp[name][0]:
                 skipped.append(
-                    f"{where} -> {name} {shown(remote_port)}: "
-                    f"not an LLDP interface reported by {name}"
+                    f"{where} -> {shown(name)} {shown(remote_port)}: "
+                    f"not an LLDP interface reported by {shown(name)}"
                 )
             else:
                 observed.add(((host, port), (name, remote_port)))
@@ -123,6 +123,6 @@ def report_links(grpc_addr, token, ca_file, devices):
     links, skipped = find_links(hostnames, lldp)
     print(f"LLDP links between selected devices: {len(links)}")
     for (ah, ai), (bh, bi), kind in links:
-        print(f"{ah} {ai} <-> {bh} {bi} [{kind}]")
+        print(f"{shown(ah)} {shown(ai)} <-> {shown(bh)} {shown(bi)} [{kind}]")
     for reason in skipped:
         print(f"skipped LLDP: {reason}", file=sys.stderr)

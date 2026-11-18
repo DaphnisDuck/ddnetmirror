@@ -489,10 +489,18 @@ def test_lldp_skips_links_sharing_an_interface(batch, capsys):
 
 
 def test_lldp_diagnostics_escape_control_characters(batch, capsys):
-    batch["lldp"] = {"SN1": [nbr("Ethernet3", "evil\n\x1b[31mhost", "eth0")]}
+    odd_port = "Eth\n\x1b[31m1"  # matched raw against spine1's own port set
+    batch["lldp"] = {
+        "SN1": [
+            nbr("Ethernet3", "evil\n\x1b[31mhost", "eth0"),
+            nbr("Ethernet1", "spine1", odd_port),
+        ],
+        "SN3": [port(odd_port)],
+    }
 
-    run_lldp()
+    assert run_lldp() == 0
 
-    err = capsys.readouterr().err
-    assert "evil\\x0a\\x1b[31mhost eth0: not in selection" in err
-    assert "\x1b" not in err
+    out = capsys.readouterr()
+    assert "evil\\x0a\\x1b[31mhost eth0: not in selection" in out.err
+    assert "leaf1 Ethernet1 <-> spine1 Eth\\x0a\\x1b[31m1 [one-sided]" in out.out
+    assert "\x1b" not in out.out + out.err
