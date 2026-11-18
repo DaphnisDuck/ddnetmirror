@@ -12,9 +12,10 @@ TOKEN = "secret-token-value"
 
 @pytest.fixture
 def cv(monkeypatch, tmp_path):
-    """Stub CloudVision: set `serials` for inventory and `result` for get_config."""
+    """Stub CloudVision: set `serials`/`version` for inventory, `result` for get_config."""
     state = {
         "serials": ["SN1"],
+        "version": None,
         "result": {"config": "", "errors": [], "filter_codes": [], "sources": []},
         "filters": [],
         "compliance_calls": [],
@@ -28,7 +29,10 @@ def cv(monkeypatch, tmp_path):
             state["filters"].extend(request.partial_eq_filter)
             for serial in state["serials"]:
                 yield inventory.DeviceStreamResponse(
-                    value=inventory.Device(key=inventory.DeviceKey(device_id=serial))
+                    value=inventory.Device(
+                        key=inventory.DeviceKey(device_id=serial),
+                        software_version=state["version"],
+                    )
                 )
 
     class FakeComplianceClient:
@@ -69,6 +73,20 @@ def test_writes_config_verbatim(cv, tmp_path):
     assert (tmp_path / "leaf1.cfg").read_bytes() == config.encode("utf-8")
     assert cv["filters"][0].hostname == "leaf1"
     assert cv["compliance_calls"] == [("cv.example:443", TOKEN, None)]
+
+
+@pytest.mark.parametrize(
+    "version, shown", [("4.32.1F", "EOS 4.32.1F"), (None, "EOS unknown"), ("", "EOS unknown")]
+)
+def test_reports_hostname_and_version(cv, tmp_path, capsys, version, shown):
+    cv["version"] = version
+    cv["result"]["config"] = "hostname leaf1\n"
+
+    assert run() == 0
+
+    out = capsys.readouterr().out
+    assert "leaf1" in out and shown in out
+    assert (tmp_path / "leaf1.cfg").read_bytes() == b"hostname leaf1\n"
 
 
 @pytest.mark.parametrize("serials", [[], ["SN1", "SN2"]])

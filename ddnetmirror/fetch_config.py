@@ -18,7 +18,7 @@ class FetchError(Exception):
     """A failure reported to the user as a one-line message."""
 
 
-async def _lookup_serials(host, port, token, ca_file, hostname):
+async def _lookup_devices(host, port, token, ca_file, hostname):
     client = AsyncCVClient.from_token(token, host, port=port, cacert=ca_file)
     request = inventory.DeviceStreamRequest(
         partial_eq_filter=[inventory.Device(hostname=hostname)]
@@ -26,23 +26,21 @@ async def _lookup_serials(host, port, token, ca_file, hostname):
     with client as channel:
         stub = inventory.DeviceServiceStub(channel)
         return [
-            resp.value.key.device_id
-            async for resp in stub.get_all(request, timeout=RPC_TIMEOUT)
+            resp.value async for resp in stub.get_all(request, timeout=RPC_TIMEOUT)
         ]
 
 
-def find_serial(host, port, token, ca_file, hostname):
+def find_device(host, port, token, ca_file, hostname):
     try:
-        serials = asyncio.run(_lookup_serials(host, port, token, ca_file, hostname))
+        devices = asyncio.run(_lookup_devices(host, port, token, ca_file, hostname))
     except Exception as exc:
         raise FetchError(f"inventory lookup failed: {exc}") from exc
-    if not serials:
+    if not devices:
         raise FetchError(f"no device with hostname {hostname!r} in inventory")
-    if len(serials) > 1:
-        raise FetchError(
-            f"{len(serials)} devices with hostname {hostname!r}: {', '.join(serials)}"
-        )
-    return serials[0]
+    if len(devices) > 1:
+        serials = ", ".join(d.key.device_id for d in devices)
+        raise FetchError(f"{len(devices)} devices with hostname {hostname!r}: {serials}")
+    return devices[0]
 
 
 def fetch_running_config(server, token, ca_bytes, serial):
@@ -96,10 +94,14 @@ def run(args):
         with open(args.ca_file, "rb") as f:
             ca_bytes = f.read()
 
-    serial = find_serial(host, port, token, args.ca_file, args.hostname)
+    device = find_device(host, port, token, args.ca_file, args.hostname)
+    serial = device.key.device_id
+    version = device.software_version or "unknown"
     config = fetch_running_config(f"{host}:{port}", token, ca_bytes, serial)
     write_new_file(output, config)
-    print(f"wrote running config for {args.hostname} ({serial}) to {output}")
+    print(
+        f"wrote running config for {args.hostname} ({serial}, EOS {version}) to {output}"
+    )
 
 
 def main(argv=None):
