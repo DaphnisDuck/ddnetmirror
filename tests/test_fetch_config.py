@@ -15,7 +15,8 @@ TOKEN = "secret-token-value"
 def cv(monkeypatch, tmp_path):
     """Stub CloudVision: `serials`/`version`/`hostname` for inventory (`hostnames`,
     `versions` override per serial), `tagged` device_ids for tag assignments,
-    `result` for get_config (`results` override per serial)."""
+    `result` for get_config (`results` override per serial), `lldp` notifications
+    per serial for the Connector (an Exception value is raised)."""
     state = {
         "serials": ["SN1"],
         "version": None,
@@ -24,6 +25,8 @@ def cv(monkeypatch, tmp_path):
         "versions": {},
         "results": {},
         "config_ids": [],
+        "lldp": {},
+        "connector": [],
         "tagged": [],
         "tag_filters": [],
         "result": {"config": "", "errors": [], "filter_codes": [], "sources": []},
@@ -74,6 +77,23 @@ def cv(monkeypatch, tmp_path):
             state["config_ids"].append(device_id)
             return state["results"].get(device_id, state["result"])
 
+    class FakeConnector:
+        def __init__(self, addr, tokenValue=None, ca=None):
+            state["connector"].append((addr, tokenValue, ca))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def get(self, queries):
+            data = state["lldp"].get(queries[0].dataset.name, [])
+            if isinstance(data, Exception):
+                raise data
+            yield {"notifications": data}
+
+    monkeypatch.setattr(fetch_config.lldp, "GRPCClient", FakeConnector)
     monkeypatch.setattr(
         fetch_config.AsyncCVClient,
         "from_token",
@@ -270,6 +290,7 @@ def test_tag_does_not_overwrite_default_output(cv, tmp_path):
         ("--hostname", "leaf1", "--tag", "role=leaf"),
         ("--hostname", "leaf1", "--output-dir", "configs"),
         ("--tag", "role=leaf", "--output", "x.cfg", "--output-dir", "configs"),
+        ("--tag", "role=leaf", "--lldp"),
         (),
     ],
 )
@@ -360,3 +381,126 @@ def test_batch_rejects_unsafe_or_colliding_names(batch, tmp_path, capsys, hostna
     )
     err = capsys.readouterr().err
     assert all(f"({serial})" in err for serial in rejected)
+
+
+LLDP_LOCAL = ["Sysdb", "l2discovery", "lldp", "status", "local", "1", "portStatus"]
+
+
+def port(intf):
+    return {"path_elements": LLDP_LOCAL + [intf], "updates": {"name": intf}}
+
+
+def nbr(intf, sysname, port_id, idx=1):
+    """A remoteSystem notification shaped as read by get_lldp_nei.py."""
+    return {
+        "path_elements": LLDP_LOCAL + [intf, "remoteSystem", idx],
+        "updates": {
+            "sysName": {"value": {"value": sysname}},
+            "msap": {"portIdentifier": {"portId": port_id}},
+        },
+    }
+
+
+def run_lldp():
+    return run(selector=("--tag", "site=lab", "--output-dir", "configs", "--lldp"))
+
+
+def test_lldp_reports_reciprocal_and_one_sided_links_once(batch, capsys):
+    batch["lldp"] = {
+        "SN1": [  # leaf1, with a duplicate observation of the same neighbor
+            port("Ethernet1"),
+            nbr("Ethernet1", "spine1", "Ethernet49/1"),
+            nbr("Ethernet1", "spine1", "Ethernet49/1", idx=2),
+        ],
+        "SN2": [nbr("Ethernet12", "spine1", "Ethernet50/1")],  # leaf2
+        "SN3": [  # spine1 sees leaf1 but not leaf2
+            port("Ethernet49/1"),
+            port("Ethernet50/1"),
+            nbr("Ethernet49/1", "leaf1", "Ethernet1"),
+        ],
+    }
+
+    assert run_lldp() == 0
+
+    out = capsys.readouterr()
+    assert out.out.splitlines()[-3:] == [
+        "LLDP links between selected devices: 2",
+        "leaf1 Ethernet1 <-> spine1 Ethernet49/1 [reciprocal]",
+        "leaf2 Ethernet12 <-> spine1 Ethernet50/1 [one-sided]",
+    ]
+    assert "skipped LLDP" not in out.err
+    assert batch["connector"] == [("cv.example:443", TOKEN, None)]
+
+
+@pytest.mark.parametrize(
+    "case, reason",
+    [
+        ("out_of_scope", "leaf1 Ethernet3 -> host7 eth0: not in selection"),
+        ("ambiguous", "leaf1 Ethernet1 -> spine1: ambiguous hostname"),
+        ("missing_port_id", "leaf1 Ethernet1: neighbor without sysName/port id"),
+        ("empty_local_port", "leaf1 : neighbor without sysName/port id"),
+        ("port_id_not_interface", "not an LLDP interface reported by spine1"),
+        ("unavailable", "spine1: LLDP data unavailable"),
+        ("query_error", "spine1: LLDP data unavailable"),
+    ],
+)
+def test_lldp_never_turns_unclear_observations_into_links(batch, capsys, case, reason):
+    to_spine = nbr("Ethernet1", "spine1", "Ethernet49/1")
+    spine = [port("Ethernet49/1")]
+    leaf1 = {
+        "out_of_scope": [nbr("Ethernet3", "host7", "eth0")],
+        "missing_port_id": [nbr("Ethernet1", "spine1", "")],
+        "empty_local_port": [nbr("", "spine1", "Ethernet49/1")],
+        "port_id_not_interface": [nbr("Ethernet1", "spine1", "001c.73aa.bbcc")],
+    }.get(case, [to_spine])
+    batch["lldp"] = {"SN1": leaf1, "SN3": spine}
+    if case == "ambiguous":
+        batch["hostnames"]["SN2"] = "spine1"
+    if case == "unavailable":
+        del batch["lldp"]["SN3"]
+    if case == "query_error":
+        batch["lldp"]["SN3"] = RuntimeError("unavailable")
+
+    # LLDP problems never change the exit status; "ambiguous" fails its config writes.
+    assert run_lldp() == (1 if case == "ambiguous" else 0)
+
+    out = capsys.readouterr()
+    assert "LLDP links between selected devices: 0" in out.out
+    assert "<->" not in out.out
+    assert reason in out.err
+
+
+def test_lldp_skips_links_sharing_an_interface(batch, capsys):
+    batch["lldp"] = {
+        "SN1": [nbr("Ethernet1", "spine1", "Ethernet49/1"), nbr("Ethernet2", "spine1", "Ethernet50/1")],
+        "SN2": [nbr("Ethernet12", "spine1", "Ethernet49/1")],
+        "SN3": [port("Ethernet49/1"), port("Ethernet50/1")],
+    }
+
+    assert run_lldp() == 0
+
+    out = capsys.readouterr()
+    assert out.out.splitlines()[-2:] == [
+        "LLDP links between selected devices: 1",
+        "leaf1 Ethernet2 <-> spine1 Ethernet50/1 [one-sided]",
+    ]
+    assert "leaf1 Ethernet1 <-> spine1 Ethernet49/1: interface seen in several links" in out.err
+    assert "leaf2 Ethernet12 <-> spine1 Ethernet49/1: interface seen in several links" in out.err
+
+
+def test_lldp_diagnostics_escape_control_characters(batch, capsys):
+    odd_port = "Eth\n\x1b[31m1"  # matched raw against spine1's own port set
+    batch["lldp"] = {
+        "SN1": [
+            nbr("Ethernet3", "evil\n\x1b[31mhost", "eth0"),
+            nbr("Ethernet1", "spine1", odd_port),
+        ],
+        "SN3": [port(odd_port)],
+    }
+
+    assert run_lldp() == 0
+
+    out = capsys.readouterr()
+    assert "evil\\x0a\\x1b[31mhost eth0: not in selection" in out.err
+    assert "leaf1 Ethernet1 <-> spine1 Eth\\x0a\\x1b[31m1 [one-sided]" in out.out
+    assert "\x1b" not in out.out + out.err

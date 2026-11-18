@@ -11,6 +11,8 @@ from cloudvision.api.arista.tag import v2 as tag
 from cloudvision.api.client import AsyncCVClient
 from cloudvision.compliance.client import ComplianceClient
 
+from ddnetmirror import lldp
+
 TOKEN_ENV = "CLOUDVISION_TOKEN"
 RPC_TIMEOUT = 30
 
@@ -146,7 +148,7 @@ def run(args):
     server = f"{host}:{port}"
 
     if args.output_dir:
-        return collect_tag(conn, server, ca_bytes, args.tag, args.output_dir)
+        return collect_tag(conn, server, ca_bytes, args.tag, args.output_dir, args.lldp)
 
     if by_hostname:
         device_filter = inventory.Device(hostname=args.hostname)
@@ -177,11 +179,12 @@ def fetch_and_write(server, token, ca_bytes, device, name, output):
     print(f"wrote running config for {name} ({serial}, EOS {version}) to {output}")
 
 
-def collect_tag(conn, server, ca_bytes, selected_tag, output_dir):
+def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=False):
     """Collect every device with the tag into output_dir, sequentially.
 
     Successes are kept; each failed device is reported and the rest continue.
-    Returns True only if every device was collected.
+    Returns True only if every device was collected. With report_lldp, also
+    prints LLDP links between the found devices (problems there are non-fatal).
     """
     label, value = selected_tag
     token = conn[2]
@@ -221,6 +224,17 @@ def collect_tag(conn, server, ca_bytes, selected_tag, output_dir):
         f"collected {written} of {len(device_ids)} devices with tag {label}={value} "
         f"into {output_dir}; {len(failures)} failed"
     )
+    if report_lldp:
+        devices = []
+        for _, device in found:
+            if device.hostname:
+                devices.append((device.hostname, device.key.device_id))
+            else:
+                print(f"skipped LLDP: {device.key.device_id}: no inventory hostname", file=sys.stderr)
+        try:
+            lldp.report_links(server, token, conn[3], devices)
+        except Exception as exc:
+            print(f"LLDP report unavailable: {exc}", file=sys.stderr)
     return not failures
 
 
@@ -240,9 +254,16 @@ def main(argv=None):
         "--output-dir",
         help="with --tag: collect every device with the tag into DIR as <hostname>.cfg",
     )
+    parser.add_argument(
+        "--lldp",
+        action="store_true",
+        help="with --output-dir: also report LLDP links between the collected devices",
+    )
     args = parser.parse_args(argv)
     if args.output_dir and args.tag is None:
         parser.error("--output-dir requires --tag")
+    if args.lldp and not args.output_dir:
+        parser.error("--lldp requires --tag and --output-dir")
     try:
         complete = run(args)
     except (FetchError, OSError) as exc:
