@@ -108,7 +108,7 @@ def find_links(hostnames, lldp):
 
 
 def report_links(grpc_addr, token, ca_file, devices):
-    """Query LLDP for devices [(hostname, serial)] and print the link report."""
+    """Query LLDP for devices [(hostname, serial)], print the link report, return links."""
     hostnames = [h for h, _ in devices]
     lldp = {}
     with GRPCClient(grpc_addr, tokenValue=token, ca=ca_file) as client:
@@ -126,3 +126,4 @@ def report_links(grpc_addr, token, ca_file, devices):
         print(f"{shown(ah)} {shown(ai)} <-> {shown(bh)} {shown(bi)} [{kind}]")
     for reason in skipped:
         print(f"skipped LLDP: {reason}", file=sys.stderr)
+    return links
