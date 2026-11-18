@@ -581,6 +581,7 @@ def test_topology_omits_failed_devices_and_untranslatable_links(batch, tmp_path,
 
 def test_topology_rejects_invalid_node_name(batch, tmp_path, capsys):
     batch["hostnames"]["SN2"] = "leaf+2"
+    batch["lldp"] = {serial: [port("Ethernet1")] for serial in batch["serials"]}
 
     assert run_topology() == 1
 
@@ -597,3 +598,35 @@ def test_topology_never_overwrites_existing_file(batch, tmp_path):
 
     assert existing.read_text() == "keep me"
     assert batch["config_ids"] == []
+
+
+def test_topology_not_written_when_every_lldp_query_fails(batch, tmp_path, capsys):
+    batch["lldp"] = {serial: RuntimeError("unavailable") for serial in batch["serials"]}
+
+    assert run_topology() == 1
+
+    assert not (tmp_path / "configs" / "lab1.clab.yml").exists()
+    assert sorted(p.name for p in (tmp_path / "configs").iterdir()) == [
+        "leaf1.cfg", "leaf2.cfg", "spine1.cfg",
+    ]
+    assert "LLDP data unavailable for every device" in capsys.readouterr().err
+
+
+def test_topology_with_lldp_but_no_neighbors_has_no_links(batch, tmp_path):
+    batch["lldp"] = {serial: [port("Ethernet1")] for serial in batch["serials"]}
+
+    assert run_topology() == 0
+
+    text = (tmp_path / "configs" / "lab1.clab.yml").read_text()
+    assert "3 of 3 devices collected" in text and "INCOMPLETE" not in text
+    assert text.endswith("  links: []\n")
+
+
+def test_topology_rejects_reserved_endpoint_node_name(batch, tmp_path, capsys):
+    batch["hostnames"]["SN2"] = "HOST"
+    batch["lldp"] = {serial: [port("Ethernet1")] for serial in batch["serials"]}
+
+    assert run_topology() == 1
+
+    assert not (tmp_path / "configs" / "lab1.clab.yml").exists()
+    assert "reserved by Containerlab link endpoints" in capsys.readouterr().err

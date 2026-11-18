@@ -245,7 +245,7 @@ def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=Fa
         f"collected {written} of {len(device_ids)} devices with tag {label}={value} "
         f"into {output_dir}; {len(failures)} failed"
     )
-    links = None
+    links, lldp_available = None, False
     if report_lldp:
         devices = []
         for _, device in found:
@@ -254,18 +254,18 @@ def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=Fa
             else:
                 print(f"skipped LLDP: {device.key.device_id}: no inventory hostname", file=sys.stderr)
         try:
-            links = lldp.report_links(server, token, conn[3], devices)
+            links, lldp_available = lldp.report_links(server, token, conn[3], devices)
         except Exception as exc:
             print(f"LLDP report unavailable: {exc}", file=sys.stderr)
     if lab:
         written_topology = write_topology(
-            output_dir, lab, selected_tag, len(device_ids), saved, links
+            output_dir, lab, selected_tag, len(device_ids), saved, links, lldp_available
         )
         return written_topology and not failures
     return not failures
 
 
-def write_topology(output_dir, lab, selected_tag, total, saved, links):
+def write_topology(output_dir, lab, selected_tag, total, saved, links, lldp_available):
     """Write <lab>.clab.yml for the saved configs; return True if written."""
     lab_name, image = lab
 
@@ -273,8 +273,8 @@ def write_topology(output_dir, lab, selected_tag, total, saved, links):
         print(f"error: topology not written: {reason}", file=sys.stderr)
         return False
 
-    if links is None:
-        return refuse("LLDP report unavailable")
+    if links is None or not lldp_available:
+        return refuse("LLDP data unavailable for every device")
     if not saved:
         return refuse("no device config was saved")
     bad = sorted(
@@ -284,6 +284,13 @@ def write_topology(output_dir, lab, selected_tag, total, saved, links):
         return refuse(
             "not valid Containerlab node names (inventory hostnames are used as-is): "
             + ", ".join(lldp.shown(n) for n in bad)
+        )
+    reserved = sorted(n for n in saved if topology.reserved_node_name(n))
+    if reserved:
+        return refuse(
+            "hostnames reserved by Containerlab link endpoints "
+            f"({', '.join(sorted(topology.RESERVED_NODE_NAMES))}, any case): "
+            + ", ".join(reserved)
         )
     label, value = selected_tag
     complete = len(saved) == total

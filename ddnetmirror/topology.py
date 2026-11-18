@@ -9,11 +9,18 @@ from ddnetmirror.lldp import shown
 # ^[a-zA-Z0-9][a-zA-Z0-9-._]+$ (nodes/default_node.go). Lab and node names are
 # held to the same character set and must start with a letter or digit.
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+# Brief link endpoints whose node part (case-insensitive) is one of these become
+# special links instead of a node link (links/link_brief.go, links/link.go).
+RESERVED_NODE_NAMES = {"host", "mgmt-net", "macvlan"}
 EOS_ETHERNET_RE = re.compile(r"Ethernet([1-9][0-9]*(?:/[1-9][0-9]*){0,2})")
 
 
 def valid_name(name):
     return bool(NAME_RE.fullmatch(name))
+
+
+def reserved_node_name(name):
+    return name.lower() in RESERVED_NODE_NAMES
 
 
 def ceos_interface(eos_name):
