@@ -4,6 +4,7 @@ import stat
 
 import pytest
 from cloudvision.api.arista.inventory import v1 as inventory
+from cloudvision.api.arista.tag import v2 as tag
 
 from ddnetmirror import fetch_config
 
@@ -12,10 +13,13 @@ TOKEN = "secret-token-value"
 
 @pytest.fixture
 def cv(monkeypatch, tmp_path):
-    """Stub CloudVision: set `serials`/`version` for inventory, `result` for get_config."""
+    """Stub CloudVision: `serials`/`version` for inventory, `tagged` device_ids for
+    tag assignments, `result` for get_config."""
     state = {
         "serials": ["SN1"],
         "version": None,
+        "tagged": [],
+        "tag_filters": [],
         "result": {"config": "", "errors": [], "filter_codes": [], "sources": []},
         "filters": [],
         "compliance_calls": [],
@@ -31,8 +35,20 @@ def cv(monkeypatch, tmp_path):
                 yield inventory.DeviceStreamResponse(
                     value=inventory.Device(
                         key=inventory.DeviceKey(device_id=serial),
+                        hostname="leaf1",
                         software_version=state["version"],
                     )
+                )
+
+    class FakeTagStub:
+        def __init__(self, channel):
+            pass
+
+        async def get_all(self, request, timeout=None):
+            state["tag_filters"].extend(request.partial_eq_filter)
+            for device_id in state["tagged"]:
+                yield tag.TagAssignmentStreamResponse(
+                    value=tag.TagAssignment(key=tag.TagAssignmentKey(device_id=device_id))
                 )
 
     class FakeComplianceClient:
@@ -54,14 +70,15 @@ def cv(monkeypatch, tmp_path):
         classmethod(lambda cls, *a, **kw: contextlib.nullcontext()),
     )
     monkeypatch.setattr(fetch_config.inventory, "DeviceServiceStub", FakeDeviceStub)
+    monkeypatch.setattr(fetch_config.tag, "TagAssignmentServiceStub", FakeTagStub)
     monkeypatch.setattr(fetch_config, "ComplianceClient", FakeComplianceClient)
     monkeypatch.setenv("CLOUDVISION_TOKEN", TOKEN)
     monkeypatch.chdir(tmp_path)
     return state
 
 
-def run(*extra):
-    return fetch_config.main(["--server", "cv.example:443", "--hostname", "leaf1", *extra])
+def run(*extra, selector=("--hostname", "leaf1")):
+    return fetch_config.main(["--server", "cv.example:443", *selector, *extra])
 
 
 def test_writes_config_verbatim(cv, tmp_path):
@@ -175,4 +192,52 @@ def test_missing_token_fails(cv, monkeypatch, tmp_path):
 
     assert run() == 1
 
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_selects_device_by_tag(cv, tmp_path, capsys):
+    cv["tagged"] = ["SN1"]
+    cv["version"] = "4.32.1F"
+    config = "! café\r\nhostname leaf1  \n"
+    cv["result"]["config"] = config
+
+    assert run(selector=("--tag", "role=leaf")) == 0
+
+    assert (tmp_path / "leaf1.cfg").read_bytes() == config.encode("utf-8")
+    out = capsys.readouterr().out
+    assert "leaf1" in out and "EOS 4.32.1F" in out
+    key = cv["tag_filters"][0].key
+    assert (key.workspace_id, key.element_type, key.label, key.value) == (
+        "", tag.ElementType.DEVICE, "role", "leaf",
+    )
+    assert cv["filters"][0].key.device_id == "SN1"
+
+
+@pytest.mark.parametrize("tagged", [[], ["SN1", "SN2"]])
+def test_no_or_multiple_tagged_devices_write_nothing(cv, tmp_path, capsys, tagged):
+    cv["tagged"] = tagged
+    cv["result"]["config"] = "hostname leaf1\n"
+
+    assert run(selector=("--tag", "role=leaf")) == 1
+
+    assert list(tmp_path.iterdir()) == []
+    assert "role=leaf" in capsys.readouterr().err
+    assert cv["compliance_calls"] == []
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        ("--tag", "role"),
+        ("--tag", "=leaf"),
+        ("--tag", "role="),
+        ("--hostname", "leaf1", "--tag", "role=leaf"),
+        (),
+    ],
+)
+def test_bad_selector_is_rejected(cv, tmp_path, selector):
+    with pytest.raises(SystemExit) as exc:
+        run(selector=selector)
+
+    assert exc.value.code == 2
     assert list(tmp_path.iterdir()) == []
