@@ -6,12 +6,24 @@ build-backend = "setuptools.build_meta"
 name = "ddnetmirror"
 version = "0.0.1"
 description = "Query Arista CVP/CVaaS and generate Containerlab digital twins"
+readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
+keywords = ["arista", "cloudvision", "cvp", "cvaas", "containerlab", "ceos", "network-lab", "digital-twin"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: System :: Networking",
+]
 dependencies = ["cloudvision>=1.35.0", "PyYAML>=6.0"]
 
 [project.optional-dependencies]
 test = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/DaphnisDuck/ddnetmirror"
+Issues = "https://github.com/DaphnisDuck/ddnetmirror/issues"
 
 [project.scripts]
 ddn = "ddnetmirror.cli:main"
