@@ -3,7 +3,7 @@
 ddn fetch \- fetch running configs, LLDP links and a Containerlab topology from CloudVision
 .SH SYNOPSIS
 .B ddn
-fetch [-h] --server SERVER (--hostname HOSTNAME | --tag KEY=VALUE) [--ca-file CA_FILE] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml] [--verbose]
+fetch [-h] --server SERVER (--hostname HOSTNAME | --tag KEY=VALUE) [--ca-file CA_FILE] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml] [--verbose] [--force]
 .SH DESCRIPTION
 Fetch running configs from CloudVision and save them unchanged. The service\-account token is read from CLOUDVISION_TOKEN.
 
@@ -53,6 +53,11 @@ these rules to DIR/startup, and use those as startup configs
 \fB\-\-verbose\fR
 with \-\-fixup\-rules: print what each rule changed per device; never prints
 config text
+
+.TP
+\fB\-\-force\fR
+with \-\-output\-dir: replace existing generated files (collected and startup
+configs, topology) instead of refusing; no backups, other files untouched
 
 .SH DISTRIBUTION
 The latest version of ddnetmirror may be downloaded from
