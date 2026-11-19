@@ -3,7 +3,7 @@
 ddn fetch \- fetch running configs, LLDP links and a Containerlab topology from CloudVision
 .SH SYNOPSIS
 .B ddn
-fetch [-h] --server SERVER (--hostname HOSTNAME | --tag KEY=VALUE) [--ca-file CA_FILE] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml]
+fetch [-h] --server SERVER (--hostname HOSTNAME | --tag KEY=VALUE) [--ca-file CA_FILE] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml] [--verbose]
 .SH DESCRIPTION
 Fetch running configs from CloudVision and save them unchanged. The service\-account token is read from CLOUDVISION_TOKEN.
 
@@ -48,6 +48,11 @@ cEOS image for every topology node (with \-\-lab\-name)
 \fB\-\-fixup\-rules\fR \fI\,RULES.yml\/\fR
 with \-\-lab\-name: keep originals in DIR/collected, write copies transformed by
 these rules to DIR/startup, and use those as startup configs
+
+.TP
+\fB\-\-verbose\fR
+with \-\-fixup\-rules: print what each rule changed per device; never prints
+config text
 
 .SH DISTRIBUTION
 The latest version of ddnetmirror may be downloaded from
