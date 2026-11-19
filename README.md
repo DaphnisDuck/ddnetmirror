@@ -7,11 +7,19 @@ ddnetmirror:
 2. saves their running configs **unchanged**;
 3. finds the links between them from LLDP;
 4. optionally applies your own text fixup rules to *copies* of the configs;
-5. writes a standard Containerlab topology for `arista_ceos` nodes.
+5. writes a standard Containerlab topology of cEOS nodes.
 
-After collection, everything is local files: you can inspect them, edit them, put them in git, and deploy offline.
+After collection, everything is local files: you can inspect them, edit them, keep them in a private git repository, and deploy offline.
 
 It is a configuration-preserving copier, a text-fixup tool and a topology generator. **It is not an EOS interpreter.** It never parses, validates or "repairs" EOS configuration. Anything a lab needs changed is expressed in rules that you write and control.
+
+## Status
+
+Early software, version 0.0.1. The full workflow passed a human-run, offline, synthetic four-node Containerlab test (cEOS 4.35.7.2M, Containerlab 0.83.0; #22). It has **not** yet been qualified against live CloudVision (CVP or CVaaS; #7), so expect rough edges and try it on a non-production selection first.
+
+## Handle generated files with care
+
+Saved running configs are real device configs. They can contain hashed credentials, keys and other secrets. ddnetmirror creates them with mode 0600. Keep them out of public repositories, issues and pull requests, and use synthetic data when reporting a bug.
 
 ## Prerequisites
 
@@ -250,3 +258,9 @@ Rules are plain text editing:
 ```sh
 .venv/bin/pip install -e ".[test]" && .venv/bin/pytest
 ```
+
+## License and trademarks
+
+Licensed under the [Apache License 2.0](LICENSE).
+
+ddnetmirror is an independent project, not affiliated with or endorsed by Arista Networks. Arista, CloudVision, EOS and cEOS are trademarks of Arista Networks. ddnetmirror does not download or redistribute cEOS images.
