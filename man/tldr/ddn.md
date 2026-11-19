@@ -16,6 +16,10 @@
 
 `ddn fetch --server {{www.arista.io}} --tag {{site=lab}} --output-dir {{lab1}} --lldp --lab-name {{lab1}} --image {{ceos:4.35.7.2M}} --fixup-rules {{rules.yml}}`
 
+- Regenerate that lab in the same directory, replacing its generated files (no backups):
+
+`ddn fetch --server {{www.arista.io}} --tag {{site=lab}} --output-dir {{lab1}} --lldp --lab-name {{lab1}} --image {{ceos:4.35.7.2M}} --fixup-rules {{rules.yml}} --force`
+
 - Use an on-prem CVP server with a private CA:
 
 `ddn fetch --server {{cvp.example.net}} --ca-file {{ca.pem}} --hostname {{leaf1}}`

@@ -123,6 +123,23 @@ Smaller steps of the same command, each leaving out more options:
 - **LLDP report only:** omit `--fixup-rules`, `--lab-name` and `--image`. The configs are collected and the links are printed; no topology is written.
 - **Collection only:** additionally omit `--lldp`. `--output-dir` only collects the configs.
 
+### Regenerate a lab in place: `--force`
+
+By default nothing is ever overwritten, so the usual way to refresh a lab is a new output directory. That also keeps the previous generation. To regenerate into the same directory instead, add `--force` (only with `--tag … --output-dir`):
+
+```sh
+.venv/bin/ddn fetch --server www.arista.io --tag site=lab --output-dir lab1 --lldp \
+    --lab-name lab1 --image ceos:4.35.7.2M --fixup-rules rules.yml --force
+```
+
+- It replaces only the files this command generates: `collected/<hostname>.cfg` (or `<hostname>.cfg` without fixups), `startup/<hostname>.cfg` and `lab1.clab.yml`. **This includes files you edited by hand at those paths.**
+- It makes **no backups**. To keep the previous lab, use a new output directory instead.
+- Each file is written to a temporary file in the same directory and then renamed over the old one, so a failed write leaves the previous complete file in place.
+- Unrelated files are never touched. Files of devices that are no longer selected (stale) are left as they are, but they are not in the new topology. The topology lists only devices that succeeded in this run.
+- A device that fails in this run keeps its previous files, is reported as failed and is left out of the topology, which is marked `INCOMPLETE` as usual.
+- A symbolic link, directory or other non-regular file at one of these paths is never followed or replaced. It is reported, and you remove it or use a new directory.
+- `--force` only writes files. It never touches a running lab: destroy and redeploy it yourself with Containerlab.
+
 ## Fetch a single device
 
 ```sh
@@ -200,7 +217,7 @@ Rules are plain text editing:
 
 ## When things go wrong
 
-- **Never overwrites.** An existing config, startup file or topology file is refused and reported. Nothing is renamed.
+- **Never overwrites** (unless you pass `--force`, see [above](#regenerate-a-lab-in-place---force)). An existing config, startup file or topology file is refused and reported. Nothing is renamed.
 - **Nothing half-written.** A failed retrieval or write leaves no partial file.
 - **Partial success.** With `--output-dir`, one device failing (retrieval, unsafe or duplicate hostname, fixup) does not stop the others:
   - each failure is reported as `failed: <hostname> (<serial>): <reason>`, or with only the device ID when the device can't be looked up, e.g. `failed: SN-LEAF1: no device with device_id 'SN-LEAF1' (tag site=lab) in inventory`;

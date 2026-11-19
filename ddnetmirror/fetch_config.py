@@ -5,7 +5,9 @@ import asyncio
 import contextlib
 import importlib.metadata
 import os
+import stat
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 from cloudvision.api.arista.inventory import v1 as inventory
@@ -87,27 +89,68 @@ def fetch_running_config(server, token, ca_bytes, serial):
     return result["config"]
 
 
-def write_new_file(path, text):
+def write_new_file(path, text, force=False):
     """Write text as UTF-8 without any changes to a new owner-only file.
 
     Refuses to overwrite. If writing or closing fails, removes the file it created.
+    With force, an existing regular file is replaced instead: the text goes to a
+    new owner-only temporary file in the same directory, which is then renamed
+    over path, so the previous file stays intact unless the rename succeeds.
     """
     data = text.encode("utf-8")
+    if force:
+        check_replaceable(path)
+        directory, name = os.path.split(path)
+        fd, temp = tempfile.mkstemp(dir=directory or ".", prefix=f".{name}.", suffix=".tmp")
+        write_fd(fd, data, temp, sync=True)
+        try:
+            os.replace(temp, path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(temp)
+            raise
+        return
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         raise FetchError(f"{path} already exists; not overwriting") from None
+    write_fd(fd, data, path)
+
+
+def write_fd(fd, data, path, sync=False):
+    """Write data to the new file fd and close it; on failure remove path."""
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
+            if sync:
+                f.flush()
+                os.fsync(f.fileno())
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(path)
         raise
 
 
-def ensure_absent(path):
-    if os.path.exists(path):
+def check_replaceable(path):
+    """Allow only a missing path or an existing regular file (never a symlink)."""
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(mode):
+        kind = "a symbolic link"
+    elif not stat.S_ISREG(mode):
+        kind = "not a regular file"
+    else:
+        return
+    raise FetchError(f"{path} is {kind}; not replacing it with --force "
+                     "(remove it, or use a new --output-dir)")
+
+
+def ensure_absent(path, force=False):
+    if force:
+        check_replaceable(path)
+    elif os.path.exists(path):
         raise FetchError(f"{path} already exists; not overwriting")
 
 
@@ -164,9 +207,10 @@ def run(args):
         lab = None
         if args.lab_name:
             lab = (args.lab_name, args.image)
-            ensure_absent(topology_path(args.output_dir, args.lab_name))
+            ensure_absent(topology_path(args.output_dir, args.lab_name), args.force)
         return collect_tag(
-            conn, server, ca_bytes, args.tag, args.output_dir, args.lldp, lab, rules, args.verbose
+            conn, server, ca_bytes, args.tag, args.output_dir, args.lldp, lab, rules, args.verbose,
+            args.force,
         )
 
     if by_hostname:
@@ -201,21 +245,21 @@ def load_fixup_rules(path):
         raise FetchError(f"{path}: {exc}") from None
 
 
-def write_startup(rules, name, config, output, verbose=False):
+def write_startup(rules, name, config, output, verbose=False, force=False):
     """Apply the fixup rules to a copy of config and write it as a new file.
     With verbose, print what each rule changed (never config text)."""
     from ddnetmirror import fixup
 
     report = (lambda line: print(f"fixup {name}: {line}")) if verbose else (lambda _: None)
-    write_new_file(output, fixup.apply_rules(rules, config, report=report, verbose=verbose))
+    write_new_file(output, fixup.apply_rules(rules, config, report=report, verbose=verbose), force)
     print(f"wrote startup config for {name} with fixups to {output}")
 
 
-def fetch_and_write(server, token, ca_bytes, device, name, output):
+def fetch_and_write(server, token, ca_bytes, device, name, output, force=False):
     serial = device.key.device_id
     version = device.software_version or "unknown"
     config = fetch_running_config(server, token, ca_bytes, serial)
-    write_new_file(output, config)
+    write_new_file(output, config, force)
     print(f"wrote running config for {name} ({serial}, EOS {version}) to {output}")
     return config
 
@@ -226,7 +270,7 @@ def topology_path(output_dir, lab_name):
 
 def collect_tag(
     conn, server, ca_bytes, selected_tag, output_dir, report_lldp=False, lab=None, rules=None,
-    verbose=False,
+    verbose=False, force=False,
 ):
     """Collect every device with the tag into output_dir, sequentially.
 
@@ -240,6 +284,10 @@ def collect_tag(
     of each to output_dir/startup; the topology then lists only devices with a
     startup config. A device whose fixup fails keeps its original and counts as
     failed. verbose prints per-device, per-rule fixup counts.
+
+    force replaces existing regular files at the generated paths (one at a time,
+    via a temporary file). A device that fails keeps its previous files, which
+    are never counted as this run's output. Other files are never looked at.
     """
     label, value = selected_tag
     token = conn[2]
@@ -274,8 +322,8 @@ def collect_tag(
             if names.count(name) > 1:
                 raise FetchError(f"hostname {name!r} is shared by several tagged devices")
             output = os.path.join(collected_dir, f"{name}.cfg")
-            ensure_absent(output)
-            config = fetch_and_write(server, token, ca_bytes, device, name, output)
+            ensure_absent(output, force)
+            config = fetch_and_write(server, token, ca_bytes, device, name, output, force)
             saved[name] = device
             written += 1
         except (FetchError, OSError) as exc:
@@ -284,7 +332,7 @@ def collect_tag(
         if rules:
             try:
                 write_startup(rules, name, config, os.path.join(output_dir, STARTUP, f"{name}.cfg"),
-                              verbose)
+                              verbose, force)
                 startup.add(name)
             except Exception as exc:  # the original stays; only this device is affected
                 fail(label_for_report, f"fixup failed, original kept: {exc}", fixup_failures)
@@ -310,7 +358,7 @@ def collect_tag(
             print(f"LLDP report unavailable: {exc}", file=sys.stderr)
     if lab:
         written_topology = write_topology(
-            output_dir, lab, len(device_ids), saved, links, lldp_available, startup
+            output_dir, lab, len(device_ids), saved, links, lldp_available, startup, force
         )
         return written_topology and not failures and not fixup_failures
     return not failures and not fixup_failures
@@ -323,7 +371,7 @@ def package_version():
         return "(version unknown)"
 
 
-def write_topology(output_dir, lab, total, saved, links, lldp_available, startup=None):
+def write_topology(output_dir, lab, total, saved, links, lldp_available, startup=None, force=False):
     """Write <lab>.clab.yml for the saved configs; return True if written.
 
     startup: names with a fixed-up startup config (None without fixups); only
@@ -373,7 +421,7 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
     for reason in omitted:
         print(f"omitted link: {reason}", file=sys.stderr)
     path = topology_path(output_dir, lab_name)
-    write_new_file(path, text)
+    write_new_file(path, text, force)
     print(f"wrote Containerlab topology {path} ({len(saved)} nodes, {len(endpoints)} links)")
     if not complete:
         print(f"warning: {path} is INCOMPLETE: only {len(saved)} of {total} devices",
@@ -421,6 +469,12 @@ def build_parser(prog=None):
         help="with --fixup-rules: print what each rule changed per device; "
         "never prints config text",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="with --output-dir: replace existing generated files (collected and startup "
+        "configs, topology) instead of refusing; no backups, other files untouched",
+    )
     return parser
 
 
@@ -439,6 +493,8 @@ def main(argv=None, prog=None):
         parser.error("--fixup-rules requires --lab-name, --image, --tag, --output-dir and --lldp")
     if args.verbose and args.fixup_rules is None:
         parser.error("--verbose requires --fixup-rules")
+    if args.force and not args.output_dir:
+        parser.error("--force requires --tag and --output-dir")
     try:
         complete = run(args)
     except (FetchError, OSError) as exc:

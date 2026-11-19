@@ -8,7 +8,7 @@ import yaml
 from cloudvision.api.arista.inventory import v1 as inventory
 from cloudvision.api.arista.tag import v2 as tag
 
-from ddnetmirror import fetch_config, topology
+from ddnetmirror import cli, fetch_config, topology
 
 TOKEN = "secret-token-value"
 
@@ -296,6 +296,7 @@ def test_tag_does_not_overwrite_default_output(cv, tmp_path):
         ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "lab1"),
         ("--tag", "s=l", "--output-dir", "c", "--lab-name", "lab1", "--image", "ceos:1"),
         ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "-lab", "--image", "ceos:1"),
+        ("--hostname", "leaf1", "--force"),  # --force only for generated lab directories
         (),
     ],
 )
@@ -787,3 +788,96 @@ def test_empty_fixup_rules_value_is_not_ignored(batch, tmp_path, capsys, with_to
 
     assert list(tmp_path.iterdir()) == []
     assert batch["tag_filters"] == [] and batch["config_ids"] == []
+
+
+LAB_ARGS = ("--tag", "site=lab", "--output-dir", "configs", "--lldp",
+            "--lab-name", "lab1", "--image", "ceos:4.35.7.2M", "--fixup-rules", "rules.yml")
+
+
+def files(directory):
+    return {str(p.relative_to(directory)): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("entry", ["ddn", "alias"])
+def test_force_regenerates_lab_and_leaves_other_files(batch, tmp_path, capsys, entry):
+    batch["lldp"] = {"SN1": [nbr("Ethernet1", "spine1", "Ethernet49/1")], "SN3": [port("Ethernet49/1")]}
+    assert run_fixups(tmp_path) == 0
+    out = tmp_path / "configs"
+    (out / "startup" / "leaf1.cfg").write_text("edited by hand")
+    (out / "notes.txt").write_text("mine")
+    previous = files(out)
+
+    # now: leaf1 changed, leaf2 fails, spine1 is no longer tagged (stale)
+    batch["tagged"] = ["SN1", "SN2"]
+    batch["results"]["SN1"] = {"config": "! SN1 new\nend\n", "errors": []}
+    batch["results"]["SN2"] = {"config": "", "errors": ["unavailable"]}
+    batch["lldp"] = {"SN1": [port("Ethernet1")], "SN2": [port("Ethernet1")]}
+    argv = ["--server", "cv.example:443", *LAB_ARGS, "--force"]
+    code = cli.main(["fetch", *argv]) if entry == "ddn" else fetch_config.main(argv)
+
+    assert code == 1  # leaf2 failed
+    now = files(out)
+    assert now["collected/leaf1.cfg"] == b"! SN1 new\nend\n"
+    assert now["startup/leaf1.cfg"] == b"! lab-SN1 new\nend\n"  # manual edit replaced
+    for kept in ["collected/leaf2.cfg", "startup/leaf2.cfg",  # failed now: previous kept
+                 "collected/spine1.cfg", "startup/spine1.cfg", "notes.txt"]:  # stale, unrelated
+        assert now[kept] == previous[kept]
+    assert set(now) == set(previous)  # no temp files, no backups
+    for name in ["collected/leaf1.cfg", "startup/leaf1.cfg", "lab1.clab.yml"]:
+        assert stat.S_IMODE((out / name).stat().st_mode) == 0o600
+    topo = now["lab1.clab.yml"].decode()
+    assert yaml.safe_load(topo)["topology"]["nodes"] == {"leaf1": {}}
+    assert "# 1 of 2 devices with a fixed-up startup config; 0 links." in topo
+    assert "INCOMPLETE" in topo
+    assert "failed: leaf2 (SN2)" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("failure", ["write", "rename"])
+def test_force_failed_replacement_keeps_previous_file(batch, tmp_path, monkeypatch, failure):
+    (tmp_path / "configs").mkdir()
+    previous = tmp_path / "configs" / "leaf1.cfg"
+    previous.write_text("previous complete config")
+    real_fdopen, real_replace = os.fdopen, os.replace
+
+    def failing_fdopen(fd, mode):
+        f = real_fdopen(fd, mode)
+        f.write(b"partial")
+        f.close()
+        raise OSError("disk full")
+
+    def failing_replace(src, dst):
+        if dst.endswith("leaf1.cfg"):
+            raise OSError("rename failed")
+        return real_replace(src, dst)
+
+    if failure == "write":
+        monkeypatch.setattr(fetch_config.os, "fdopen", failing_fdopen)
+    else:
+        monkeypatch.setattr(fetch_config.os, "replace", failing_replace)
+
+    assert run(selector=("--tag", "site=lab", "--output-dir", "configs", "--force")) == 1
+
+    assert previous.read_text() == "previous complete config"
+    names = sorted(p.name for p in (tmp_path / "configs").iterdir())
+    assert names == (["leaf1.cfg"] if failure == "write" else ["leaf1.cfg", "leaf2.cfg", "spine1.cfg"])
+
+
+def test_force_refuses_symlinks_and_non_regular_files(batch, tmp_path, capsys):
+    batch["lldp"] = {"SN1": [port("Ethernet1")]}
+    out = tmp_path / "configs"
+    out.mkdir()
+    target = tmp_path / "elsewhere.cfg"
+    target.write_text("not ours")
+    (out / "leaf1.cfg").symlink_to(target)
+    (out / "lab1.clab.yml").mkdir()
+    topology_run = ("--tag", "site=lab", "--output-dir", "configs", "--lldp",
+                    "--lab-name", "lab1", "--image", "ceos:4.35.7.2M", "--force")
+
+    assert run(selector=topology_run) == 1  # refused before fetching anything
+    assert batch["config_ids"] == []
+    assert "configs/lab1.clab.yml is not a regular file; not replacing it" in capsys.readouterr().err
+
+    assert run(selector=("--tag", "site=lab", "--output-dir", "configs", "--force")) == 1
+    assert (out / "leaf1.cfg").is_symlink() and target.read_text() == "not ours"
+    assert "configs/leaf1.cfg is a symbolic link; not replacing it" in capsys.readouterr().err
+    assert (out / "leaf2.cfg").exists() and (out / "spine1.cfg").exists()
