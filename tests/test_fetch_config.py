@@ -881,3 +881,33 @@ def test_force_refuses_symlinks_and_non_regular_files(batch, tmp_path, capsys):
     assert (out / "leaf1.cfg").is_symlink() and target.read_text() == "not ours"
     assert "configs/leaf1.cfg is a symbolic link; not replacing it" in capsys.readouterr().err
     assert (out / "leaf2.cfg").exists() and (out / "spine1.cfg").exists()
+
+
+def test_force_never_touches_unrelated_files_or_directories(batch, tmp_path):
+    batch["lldp"] = {"SN1": [port("Ethernet1")]}
+    assert run_fixups(tmp_path) == 0
+    out = tmp_path / "configs"
+    unrelated = ["notes.txt", "mine/plan.txt", "collected/notes.txt", "collected/old/leaf1.cfg",
+                 "startup/README", "startup/keep/leaf2.cfg",
+                 "collected/spine1.cfg", "startup/spine1.cfg"]  # spine1: no longer selected
+    for name in unrelated[:-2]:
+        (out / name).parent.mkdir(exist_ok=True)
+        (out / name).write_text(f"user file {name}")
+    for name in unrelated:
+        os.utime(out / name, ns=(10**18, 10**18))  # a fixed past time, to detect any rewrite
+    before = {name: ((out / name).read_bytes(), (out / name).stat().st_mtime_ns) for name in unrelated}
+    dirs = {d: sorted(p.name for p in (out / d).iterdir()) for d in ["mine", "collected/old", "startup/keep"]}
+
+    batch["tagged"] = ["SN1", "SN2"]
+    for serial in batch["tagged"]:
+        batch["results"][serial] = {"config": f"! {serial} regenerated\nend\n", "errors": []}
+    assert run_fixups(tmp_path, FIXUP_RULES, "--force") == 0
+
+    after = {name: ((out / name).read_bytes(), (out / name).stat().st_mtime_ns) for name in unrelated}
+    assert after == before
+    assert {d: sorted(p.name for p in (out / d).iterdir()) for d in dirs} == dirs
+    assert (out / "collected" / "leaf1.cfg").read_text() == "! SN1 regenerated\nend\n"
+    assert (out / "startup" / "leaf2.cfg").read_text() == "! lab-SN2 regenerated\nend\n"
+    assert yaml.safe_load((out / "lab1.clab.yml").read_text())["topology"]["nodes"] == {
+        "leaf1": {}, "leaf2": {},
+    }
