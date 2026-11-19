@@ -14,6 +14,7 @@ from cloudvision.compliance.client import ComplianceClient
 from ddnetmirror import lldp, topology
 
 TOKEN_ENV = "CLOUDVISION_TOKEN"
+COLLECTED, STARTUP = "collected", "startup"  # subdirectories used with fixup rules
 RPC_TIMEOUT = 30
 
 
@@ -141,6 +142,7 @@ def parse_server(server):
 
 def run(args):
     """Return True if every selected device was collected."""
+    rules = load_fixup_rules(args.fixup_rules) if args.fixup_rules else None
     token = os.environ.get(TOKEN_ENV, "").strip()
     if not token:
         raise FetchError(f"{TOKEN_ENV} is not set")
@@ -161,7 +163,9 @@ def run(args):
         if args.lab_name:
             lab = (args.lab_name, args.image)
             ensure_absent(topology_path(args.output_dir, args.lab_name))
-        return collect_tag(conn, server, ca_bytes, args.tag, args.output_dir, args.lldp, lab)
+        return collect_tag(
+            conn, server, ca_bytes, args.tag, args.output_dir, args.lldp, lab, rules
+        )
 
     if by_hostname:
         device_filter = inventory.Device(hostname=args.hostname)
@@ -184,19 +188,41 @@ def run(args):
     return True
 
 
+def load_fixup_rules(path):
+    """Read and validate a fixup rule file before anything is fetched or written."""
+    from ddnetmirror import fixup  # imported here: fixup imports this module
+
+    try:
+        with open(path, "rb") as f:
+            return fixup.load_rules(f.read().decode("utf-8"))
+    except (fixup.RuleError, UnicodeDecodeError) as exc:
+        raise FetchError(f"{path}: {exc}") from None
+
+
+def write_startup(rules, name, config, output):
+    """Apply the fixup rules to a copy of config and write it as a new file."""
+    from ddnetmirror import fixup
+
+    write_new_file(output, fixup.apply_rules(rules, config, report=lambda _: None))
+    print(f"wrote startup config for {name} with fixups to {output}")
+
+
 def fetch_and_write(server, token, ca_bytes, device, name, output):
     serial = device.key.device_id
     version = device.software_version or "unknown"
     config = fetch_running_config(server, token, ca_bytes, serial)
     write_new_file(output, config)
     print(f"wrote running config for {name} ({serial}, EOS {version}) to {output}")
+    return config
 
 
 def topology_path(output_dir, lab_name):
     return os.path.join(output_dir, f"{lab_name}.clab.yml")
 
 
-def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=False, lab=None):
+def collect_tag(
+    conn, server, ca_bytes, selected_tag, output_dir, report_lldp=False, lab=None, rules=None
+):
     """Collect every device with the tag into output_dir, sequentially.
 
     Successes are kept; each failed device is reported and the rest continue.
@@ -204,15 +230,24 @@ def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=Fa
     was written). With report_lldp, also prints LLDP links between the found
     devices (problems there are non-fatal). lab=(name, image) also writes a
     Containerlab topology for the saved configs (requires report_lldp).
+
+    With fixup rules, originals go to output_dir/collected and a transformed copy
+    of each to output_dir/startup; the topology then lists only devices with a
+    startup config. A device whose fixup fails keeps its original and counts as
+    failed.
     """
     label, value = selected_tag
     token = conn[2]
     device_ids = find_tagged_device_ids(*conn, label, value)
-    os.makedirs(output_dir, exist_ok=True)
-    failures = []
+    collected_dir = os.path.join(output_dir, COLLECTED) if rules else output_dir
+    os.makedirs(collected_dir, exist_ok=True)
+    if rules:
+        os.makedirs(os.path.join(output_dir, STARTUP), exist_ok=True)
+    failures, fixup_failures = [], []
+    startup = None if rules is None else set()  # names with a startup config
 
-    def fail(name, reason):
-        failures.append(name)
+    def fail(name, reason, into=failures):
+        into.append(name)
         print(f"failed: {name}: {reason}", file=sys.stderr)
 
     found = []
@@ -233,18 +268,28 @@ def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=Fa
             check_safe_name(name, "")
             if names.count(name) > 1:
                 raise FetchError(f"hostname {name!r} is shared by several tagged devices")
-            output = os.path.join(output_dir, f"{name}.cfg")
+            output = os.path.join(collected_dir, f"{name}.cfg")
             ensure_absent(output)
-            fetch_and_write(server, token, ca_bytes, device, name, output)
+            config = fetch_and_write(server, token, ca_bytes, device, name, output)
             saved[name] = device
             written += 1
         except (FetchError, OSError) as exc:
             fail(label_for_report, exc)
+            continue
+        if rules:
+            try:
+                write_startup(rules, name, config, os.path.join(output_dir, STARTUP, f"{name}.cfg"))
+                startup.add(name)
+            except Exception as exc:  # the original stays; only this device is affected
+                fail(label_for_report, f"fixup failed, original kept: {exc}", fixup_failures)
 
     print(
         f"collected {written} of {len(device_ids)} devices with tag {label}={value} "
-        f"into {output_dir}; {len(failures)} failed"
+        f"into {collected_dir}; {len(failures)} failed"
     )
+    if rules:
+        print(f"wrote {len(startup)} of {written} startup configs with fixups into "
+              f"{os.path.join(output_dir, STARTUP)}; {len(fixup_failures)} failed")
     links, lldp_available = None, False
     if report_lldp:
         devices = []
@@ -259,15 +304,24 @@ def collect_tag(conn, server, ca_bytes, selected_tag, output_dir, report_lldp=Fa
             print(f"LLDP report unavailable: {exc}", file=sys.stderr)
     if lab:
         written_topology = write_topology(
-            output_dir, lab, selected_tag, len(device_ids), saved, links, lldp_available
+            output_dir, lab, selected_tag, len(device_ids), saved, links, lldp_available,
+            startup,
         )
-        return written_topology and not failures
-    return not failures
+        return written_topology and not failures and not fixup_failures
+    return not failures and not fixup_failures
 
 
-def write_topology(output_dir, lab, selected_tag, total, saved, links, lldp_available):
-    """Write <lab>.clab.yml for the saved configs; return True if written."""
+def write_topology(
+    output_dir, lab, selected_tag, total, saved, links, lldp_available, startup=None
+):
+    """Write <lab>.clab.yml for the saved configs; return True if written.
+
+    startup: names with a fixed-up startup config (None without fixups); only
+    those become nodes, referencing startup/<name>.cfg.
+    """
     lab_name, image = lab
+    if startup is not None:
+        saved = {n: d for n, d in saved.items() if n in startup}
 
     def refuse(reason):
         print(f"error: topology not written: {reason}", file=sys.stderr)
@@ -276,7 +330,8 @@ def write_topology(output_dir, lab, selected_tag, total, saved, links, lldp_avai
     if links is None or not lldp_available:
         return refuse("LLDP data unavailable for every device")
     if not saved:
-        return refuse("no device config was saved")
+        return refuse("no device config was saved" if startup is None
+                      else "no startup config was written")
     bad = sorted(
         n for n, d in saved.items() if not d.hostname or not topology.valid_name(n)
     )
@@ -294,15 +349,16 @@ def write_topology(output_dir, lab, selected_tag, total, saved, links, lldp_avai
         )
     label, value = selected_tag
     complete = len(saved) == total
+    what = "devices collected" if startup is None else "devices with a fixed-up startup config"
     header = [
         f"Generated by ddnetmirror from tag {lldp.shown(label)}={lldp.shown(value)}: "
-        f"{len(saved)} of {total} devices collected."
+        f"{len(saved)} of {total} {what}."
     ]
     if not complete:
-        header.append(
-            "INCOMPLETE: devices without a saved config, and their links, are missing."
-        )
-    nodes = {name: f"{name}.cfg" for name in saved}
+        missing = "a saved config" if startup is None else "a startup config"
+        header.append(f"INCOMPLETE: devices without {missing}, and their links, are missing.")
+    prefix = "" if startup is None else f"{STARTUP}/"  # relative to the topology file
+    nodes = {name: f"{prefix}{name}.cfg" for name in saved}
     text, omitted = topology.build(lab_name, image, nodes, links, header)
     for reason in omitted:
         print(f"omitted link: {reason}", file=sys.stderr)
@@ -343,6 +399,12 @@ def main(argv=None):
         help="with --lldp: also write a Containerlab topology DIR/<NAME>.clab.yml",
     )
     parser.add_argument("--image", help="cEOS image for every topology node (with --lab-name)")
+    parser.add_argument(
+        "--fixup-rules",
+        metavar="RULES.yml",
+        help="with --lab-name: keep originals in DIR/collected, write copies transformed "
+        "by these rules to DIR/startup, and use those as startup configs",
+    )
     args = parser.parse_args(argv)
     if args.output_dir and args.tag is None:
         parser.error("--output-dir requires --tag")
@@ -352,6 +414,8 @@ def main(argv=None):
         parser.error("--lab-name and --image must be given together")
     if args.lab_name and not args.lldp:
         parser.error("--lab-name requires --tag, --output-dir and --lldp")
+    if args.fixup_rules and not args.lab_name:
+        parser.error("--fixup-rules requires --lab-name, --image, --tag, --output-dir and --lldp")
     try:
         complete = run(args)
     except (FetchError, OSError) as exc:

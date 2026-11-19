@@ -16,6 +16,9 @@ export CLOUDVISION_TOKEN=...   # CloudVision service-account token (env var only
 # ...and also write a Containerlab topology configs/lab1.clab.yml for the saved configs:
 .venv/bin/ddnetmirror-fetch-config --server www.arista.io --tag site=lab --output-dir configs --lldp \
     --lab-name lab1 --image ceos:4.35.7.2M
+# ...with startup configs transformed by fixup rules (originals kept in configs/collected):
+.venv/bin/ddnetmirror-fetch-config --server www.arista.io --tag site=lab --output-dir configs --lldp \
+    --lab-name lab1 --image ceos:4.35.7.2M --fixup-rules rules.yml
 # on-prem CVP with a private CA:
 .venv/bin/ddnetmirror-fetch-config --server cvp.example.net --hostname leaf1 --ca-file ca.pem
 ```
@@ -25,6 +28,8 @@ Looks the device up by hostname in the CloudVision inventory, or by a `tag.v2` d
 `--lldp` prints one line per link between selected devices, for example `leaf1 Ethernet1 <-> spine1 Ethernet49/1 [reciprocal]`, or `[one-sided]` when only one side reported it. Interface names are printed exactly as LLDP reports them. A neighbor becomes a link only if its LLDP system name exactly matches the hostname of one selected device and its port ID is an LLDP interface that device reports. Anything else is listed as `skipped LLDP: …` and does not change the exit status.
 
 `--lab-name NAME --image IMAGE` (together, with `--lldp`) writes `DIR/NAME.clab.yml`. It has one `arista_ceos` node per saved config, named by the inventory hostname exactly as-is. Each node's `startup-config` is a path relative to the topology file (for example `leaf1.cfg`). Links come only from accepted LLDP links between saved devices, with interfaces converted mechanically (`Ethernet49/1` → `eth49_1`). A link whose interface can't be converted is left out and reported. Configs are never modified, including their `hostname` lines. If some devices failed, the topology is marked `INCOMPLETE` in its header and the exit status is non-zero. An existing topology file is never overwritten. Deploy it with `sudo containerlab deploy -t DIR/NAME.clab.yml`.
+
+`--fixup-rules RULES.yml` (with `--lab-name`) applies one rule file (see [Text fixups](#text-fixups)) to every collected config. The rule file is checked before anything is fetched or written. Originals are saved unchanged in `DIR/collected/<hostname>.cfg`, and the transformed copies in `DIR/startup/<hostname>.cfg`, which the topology references (`startup-config: "startup/leaf1.cfg"`). If a device's fixup fails, its original is kept, it gets no startup file and no topology node (nor links), the failure is reported, the topology is marked `INCOMPLETE`, and the exit status is non-zero. Without `--fixup-rules` the layout is unchanged.
 
 **Live CVP/CVaaS compatibility is unverified.** This has been tested only against stubbed responses (`.venv/bin/pytest`).
 
