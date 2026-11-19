@@ -18,6 +18,7 @@ OPS = {
     "delete-line": ({"match"}, {"regex"}),
     "delete-block": ({"match"}, {"regex"}),
     "insert-if-missing": ({"match", "text"}, {"regex"}),
+    "collapse-separators": (set(), set()),
 }
 
 
@@ -48,7 +49,7 @@ class Rule:
         self.regex = spec.get("regex", False)
         if not isinstance(self.regex, bool):
             raise RuleError(f"{where} ({self.op}): regex must be true or false")
-        self.match = spec["match"]
+        self.match = spec.get("match")
         self.replacement = spec.get("with")
         self.text = spec.get("text")
         self.name = f"{where} {self.op}"
@@ -111,7 +112,7 @@ def indent(content):
 
 def delete_blocks(rule, lines):
     """Remove each matching line and its more-indented descendants."""
-    kept, removed, i = [], 0, 0
+    kept, removed, blocks, i = [], 0, 0, 0
     while i < len(lines):
         content = lines[i][0]
         if not rule.matches(content):
@@ -127,12 +128,29 @@ def delete_blocks(rule, lines):
                 break  # equal/lesser indentation, incl. an unindented "!", ends the block
             end = j
         removed += end - i + 1
+        blocks += 1
         i = end + 1  # trailing blank lines after the last descendant are kept
-    return kept, removed
+    return kept, removed, f"{blocks} block(s) removed"
+
+
+def collapse_separators(lines):
+    """Keep one line of each run of directly adjacent unindented "!"-only lines.
+
+    The last line of a run is kept, so its line ending (or missing final newline)
+    stays. Blank lines, indented "!" lines and "! comment" lines end a run.
+    """
+    kept, runs = [], 0
+    for i, line in enumerate(lines):
+        if line[0] == "!" and i + 1 < len(lines) and lines[i + 1][0] == "!":
+            continue  # a later "!" of the same run is kept instead
+        if line[0] == "!" and i > 0 and lines[i - 1][0] == "!":
+            runs += 1  # last line of a run of two or more
+        kept.append(line)
+    return kept, len(lines) - len(kept), f"{runs} separator run(s) collapsed"
 
 
 def apply_rule(rule, lines):
-    """Return (new lines, count of affected lines)."""
+    """Return (new lines, count of affected lines, op-specific detail)."""
     if rule.op == "replace":
         changed = 0
         for line in lines:
@@ -143,54 +161,90 @@ def apply_rule(rule, lines):
             if new != line[0]:
                 line[0] = new
                 changed += 1
-        return lines, changed
+        return lines, changed, f"{changed} line(s) replaced"
     if rule.op == "delete-line":
         kept = [line for line in lines if not rule.matches(line[0])]
-        return kept, len(lines) - len(kept)
+        return kept, len(lines) - len(kept), f"{len(lines) - len(kept)} line(s) deleted"
     if rule.op == "delete-block":
         return delete_blocks(rule, lines)
+    if rule.op == "collapse-separators":
+        return collapse_separators(lines)
     # insert-if-missing
     if any(rule.matches(line[0]) for line in lines):
-        return lines, 0
+        return lines, 0, "match present, nothing inserted"
     if lines and not lines[-1][1]:
         lines[-1][1] = lines[0][1] if lines[0][1] else "\n"  # end the last line first
     fragment = split_lines(rule.text)  # verbatim; split only so later rules see lines
     lines.extend(fragment)
-    return lines, len(fragment)
+    return lines, len(fragment), "fragment inserted"
 
 
-def apply_rules(rules, text, report=print):
+def apply_rules(rules, text, report=print, verbose=False):
+    """Apply rules in order. Reports one count line per rule; verbose adds the
+    op-specific detail. Never reports config text."""
     lines = split_lines(text)
     for rule in rules:
-        lines, count = apply_rule(rule, lines)
+        lines, count, detail = apply_rule(rule, lines)
         # a replacement may contain line breaks: re-split so the next rule sees
         # physical lines (every byte and ending kept as-is)
         lines = split_lines("".join(content + ending for content, ending in lines))
-        report(f"{rule.name}: {count} line(s) affected")
+        report(f"{rule.name}: {count} line(s) affected" + (f" ({detail})" if verbose else ""))
     return "".join(content + ending for content, ending in lines)
 
 
 def build_parser(prog=None):
     parser = argparse.ArgumentParser(
         prog=prog,
+        usage="%(prog)s [-h] [--verbose] input --rules RULES --output OUTPUT\n"
+        "       %(prog)s --check RULES",
         description="Apply text fixup rules to a copy of a config file. "
         "The input is never modified; the output is a new file."
     )
-    parser.add_argument("input", help="config file to read (UTF-8)")
-    parser.add_argument("--rules", required=True, help="YAML rule file")
-    parser.add_argument("--output", required=True, help="new output file; never overwritten")
+    parser.add_argument("input", nargs="?", help="config file to read (UTF-8)")
+    parser.add_argument("--rules", help="YAML rule file")
+    parser.add_argument("--output", help="new output file; never overwritten")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="also name what each rule changed (blocks, fragments, separator runs); "
+        "never prints config text",
+    )
+    parser.add_argument(
+        "--check",
+        metavar="RULES",
+        help="only validate a rule file: reads no config and writes nothing",
+    )
     return parser
 
 
 def main(argv=None, prog=None):
     parser = build_parser(prog)
     args = parser.parse_args(argv)
+    if args.check is not None:
+        if (args.input, args.rules, args.output) != (None, None, None):
+            parser.error("--check takes only a rule file (no input, --rules or --output)")
+        try:
+            with open(args.check, encoding="utf-8") as f:
+                rules = load_rules(f.read())
+        except RuleError as exc:
+            print(f"error: {args.check}: {exc}", file=sys.stderr)
+            return 1
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"{args.check}: {len(rules)} rule(s) OK")
+        return 0
+    missing = [name for name, value in
+               (("input", args.input), ("--rules", args.rules), ("--output", args.output))
+               if value is None]
+    if missing:
+        parser.error(f"the following arguments are required: {', '.join(missing)}")
     try:
         with open(args.rules, encoding="utf-8") as f:
             rules = load_rules(f.read())
         with open(args.input, "rb") as f:
             text = f.read().decode("utf-8")
-        result = apply_rules(rules, text)
+        result = apply_rules(rules, text, verbose=args.verbose)
         write_new_file(args.output, result)
     except RuleError as exc:
         print(f"error: {args.rules}: {exc}", file=sys.stderr)

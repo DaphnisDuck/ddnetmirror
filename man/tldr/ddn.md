@@ -24,6 +24,10 @@
 
 `ddn fixup {{lab1/collected/leaf1.cfg}} --rules {{rules.yml}} --output {{leaf1-lab.cfg}}`
 
+- Check a fixup rule file without reading or writing any config:
+
+`ddn fixup --check {{rules.yml}}`
+
 - Show the options of a subcommand:
 
 `ddn {{fetch|fixup}} --help`

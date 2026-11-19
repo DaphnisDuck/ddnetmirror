@@ -59,5 +59,5 @@ def test_leading_double_dash_reaches_the_subcommand(tmp_path, capsys):
         results.append((exc.value.code, capsys.readouterr().err.replace(prog, "PROG")))
 
     assert results[0] == results[1]
-    assert results[0][0] == 2 and "required: --rules, --output" in results[0][1]
+    assert results[0][0] == 2 and "unrecognized arguments: --rules" in results[0][1]
     assert not (tmp_path / "out.cfg").exists()

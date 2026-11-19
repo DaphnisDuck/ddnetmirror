@@ -140,9 +140,19 @@ The device is looked up by inventory hostname, or by a device tag that matches e
 
 This prints one `rule N <op>: <count> line(s) affected` line per rule. It writes a new file and never touches the input. The result is identical to what `--fixup-rules` writes to `startup/`.
 
+`--verbose` adds what each count means, for example `rule 3 delete-block: 3 line(s) affected (1 block(s) removed)`, `rule 9 collapse-separators: 4 line(s) affected (2 separator run(s) collapsed)` or, for a rule that found its match, `insert-if-missing: 0 line(s) affected (match present, nothing inserted)`. With `ddn fetch … --fixup-rules rules.yml --verbose` the same lines are printed for every device, prefixed `fixup <hostname>:`. Neither ever prints config text, matched lines or replacement text.
+
+Check a rule file without touching any config:
+
+```sh
+.venv/bin/ddn fixup --check rules.yml     # prints "rules.yml: 9 rule(s) OK", or the first error
+```
+
+`--check` runs the same validation as a real run (see below). It reads only the rule file, writes nothing and exits non-zero if the file is invalid.
+
 ## Fixup rules
 
-A rule file is a YAML list, and rules run in order, each on the previous rule's output. Every rule has an `op` and a `match`. `match` is a literal substring, or a Python regex when `regex: true`. Matching is per line, without the line ending.
+A rule file is a YAML list, and rules run in order, each on the previous rule's output. Every rule has an `op`, and all but `collapse-separators` have a `match`. `match` is a literal substring, or a Python regex when `regex: true`. Matching is per line, without the line ending.
 
 | op | Fields | Effect |
 |---|---|---|
@@ -150,6 +160,7 @@ A rule file is a YAML list, and rules run in order, each on the previous rule's 
 | `delete-line` | `match` | Removes matching lines only; their indented children stay. |
 | `delete-block` | `match` | Removes each matching line plus the following more-indented lines. The block ends at the next non-blank line with equal or lesser indentation, such as an unindented `!`, which is kept. |
 | `insert-if-missing` | `match`, `text` | If no line matches, appends `text` verbatim at the end of the file. |
+| `collapse-separators` | (none) | Merges each run of directly adjacent, unindented lines that are exactly `!` into one. Blank lines end a run; indented `!` lines and `!` comments (e.g. `! Command: show running-config`) are never touched. |
 
 Example (synthetic):
 
@@ -175,11 +186,14 @@ Example (synthetic):
        description [lab] containerlab management
     !
 - {op: insert-if-missing, match: '^end$', regex: true, text: "end\n"}
+
+# tidy the "!" runs the deleted blocks left behind
+- op: collapse-separators
 ```
 
 Rules are plain text editing:
 - Untouched text and line endings are kept byte for byte.
-- ddnetmirror does no automatic `!` separator normalisation. Your rules still change separators where they say so: inserted text can add `!` lines, and deleting blocks can remove `!` lines or leave two in a row.
+- ddnetmirror does no automatic `!` separator normalisation. Your rules still change separators where they say so: inserted text can add `!` lines, deleting blocks can remove `!` lines or leave two in a row, and `collapse-separators` (only if you list it) merges such runs.
 - `insert-if-missing` first ends an unterminated last line (using the file's line ending), then appends the fragment verbatim.
 - A rule file is fully validated before use: unknown ops or fields, bad regexes and bad `\N` references are all rejected.
 - Every rule applies to every device. Rename hostnames with a `replace` rule if you want to; ddnetmirror never does it on its own.
