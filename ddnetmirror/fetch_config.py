@@ -377,7 +377,7 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
     return True
 
 
-def main(argv=None, prog=None):
+def build_parser(prog=None):
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Fetch running configs from CloudVision and save them unchanged. "
@@ -411,6 +411,11 @@ def main(argv=None, prog=None):
         help="with --lab-name: keep originals in DIR/collected, write copies transformed "
         "by these rules to DIR/startup, and use those as startup configs",
     )
+    return parser
+
+
+def main(argv=None, prog=None):
+    parser = build_parser(prog)
     args = parser.parse_args(argv)
     if args.output_dir and args.tag is None:
         parser.error("--output-dir requires --tag")

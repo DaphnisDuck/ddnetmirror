@@ -11,7 +11,7 @@ COMMANDS = {
 }
 
 
-def main(argv=None):
+def build_parser():
     parser = argparse.ArgumentParser(
         prog="ddn",
         description="ddnetmirror. Run 'ddn COMMAND --help' for a command's options.",
@@ -19,6 +19,11 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("command", choices=COMMANDS, metavar="COMMAND", help="fetch or fixup")
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
     argv = sys.argv[1:] if argv is None else list(argv)
     # Parse only the command word (or -h / a usage error); everything after it,
     # including a leading "--", goes to the subcommand verbatim.

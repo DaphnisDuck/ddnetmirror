@@ -1,0 +1,26 @@
+.TH DDN-FIXUP "1" "2026\-11\-19" "ddnetmirror 0.0.1" "ddnetmirror manual"
+.SH NAME
+ddn fixup \- apply text fixup rules to a copy of a config file
+.SH SYNOPSIS
+.B ddn
+fixup [-h] --rules RULES --output OUTPUT input
+.SH DESCRIPTION
+Apply text fixup rules to a copy of a config file. The input is never modified; the output is a new file.
+
+.TP
+\fBinput\fR
+config file to read (UTF\-8)
+
+.SH OPTIONS
+.TP
+\fB\-\-rules\fR \fI\,RULES\/\fR
+YAML rule file
+
+.TP
+\fB\-\-output\fR \fI\,OUTPUT\/\fR
+new output file; never overwritten
+
+.SH DISTRIBUTION
+The latest version of ddnetmirror may be downloaded from
+.UR https://github.com/DaphnisDuck/ddnetmirror
+.UE
