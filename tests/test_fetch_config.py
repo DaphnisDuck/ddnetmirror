@@ -299,6 +299,8 @@ def test_tag_does_not_overwrite_default_output(cv, tmp_path):
         ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "-lab", "--image", "ceos:1"),
         ("--hostname", "leaf1", "--force"),  # --force only for generated lab directories
         ("--tag", "s=l", "--output-dir", "c", "--lldp", "--image", "auto"),  # needs --lab-name
+        ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "lab1", "--image", ""),
+        ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "lab1", "--image", " "),
         (),
     ],
 )

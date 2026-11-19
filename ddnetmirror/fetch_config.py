@@ -530,6 +530,8 @@ def main(argv=None, prog=None):
         parser.error("--fallback-image was removed: without --image, a local ceos image is "
                      "picked per device (the newest one when no version matches); "
                      "pass --image IMAGE to use one image for every node")
+    if args.image is not None and not args.image.strip():
+        parser.error("--image must not be empty (omit it to pick images by EOS version)")
     if args.image is not None and not args.lab_name:
         parser.error("--image requires --lab-name")
     if args.image == "auto":

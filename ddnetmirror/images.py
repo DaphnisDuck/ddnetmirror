@@ -90,7 +90,8 @@ class Selector:
         if not eos_version:
             tag, _ = newest(self.candidates)
             return self.image(tag), "EOS version unknown; newest local image", False
-        text = EOS_WRAPPER_RE.fullmatch(eos_version)["version"]
+        wrapped = EOS_WRAPPER_RE.fullmatch(eos_version)  # None e.g. with a line break
+        text = wrapped["version"] if wrapped else eos_version
         version = parse_version(text)
         if version is None:
             tag, _ = newest(self.candidates)

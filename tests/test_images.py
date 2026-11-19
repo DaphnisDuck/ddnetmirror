@@ -49,6 +49,7 @@ def test_choose_exact_then_newest_in_train_then_nearest_train(docker, tags, imag
     ("EOS64-4.34.2F", "ceos:4.34.2F", "exact match"),
     (None, "ceos:4.35.1F", "EOS version unknown; newest local image"),
     ("4.34.2F-INT", "ceos:4.35.1F", "EOS version '4.34.2F-INT' not recognized; newest local image"),
+    ("4.34.2F\n", "ceos:4.35.1F", "EOS version '4.34.2F\\n' not recognized; newest local image"),
 ])
 def test_eos64_is_ignored_and_unknown_versions_get_the_newest(docker, version, image, reason):
     docker["tags"] = ["4.33.1F", "4.34.2F", "4.35.1F"]
