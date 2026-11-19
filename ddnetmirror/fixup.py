@@ -170,7 +170,7 @@ def apply_rules(rules, text, report=print):
     return "".join(content + ending for content, ending in lines)
 
 
-def main(argv=None, prog=None):
+def build_parser(prog=None):
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Apply text fixup rules to a copy of a config file. "
@@ -179,6 +179,11 @@ def main(argv=None, prog=None):
     parser.add_argument("input", help="config file to read (UTF-8)")
     parser.add_argument("--rules", required=True, help="YAML rule file")
     parser.add_argument("--output", required=True, help="new output file; never overwritten")
+    return parser
+
+
+def main(argv=None, prog=None):
+    parser = build_parser(prog)
     args = parser.parse_args(argv)
     try:
         with open(args.rules, encoding="utf-8") as f:

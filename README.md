@@ -34,7 +34,7 @@ This installs one command, `ddn`, with two subcommands:
 | `ddn fetch` | Query CloudVision: running configs, EOS versions, LLDP, and optionally a Containerlab topology. |
 | `ddn fixup` | Apply fixup rules to a copy of one config file. |
 
-`ddn COMMAND --help` lists each command's options. The older names `ddnetmirror-fetch-config` and `ddnetmirror-fixup` still work as aliases.
+`ddn COMMAND --help` lists each command's options. Man pages and tldr-style examples are in [`man/`](man/). The older names `ddnetmirror-fetch-config` and `ddnetmirror-fixup` still work as aliases.
 
 ## From CloudVision to Containerlab
 

@@ -1,0 +1,55 @@
+.TH DDN-FETCH "1" "2026\-11\-19" "ddnetmirror 0.0.1" "ddnetmirror manual"
+.SH NAME
+ddn fetch \- fetch running configs, LLDP links and a Containerlab topology from CloudVision
+.SH SYNOPSIS
+.B ddn
+fetch [-h] --server SERVER (--hostname HOSTNAME | --tag KEY=VALUE) [--ca-file CA_FILE] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml]
+.SH DESCRIPTION
+Fetch running configs from CloudVision and save them unchanged. The service\-account token is read from CLOUDVISION_TOKEN.
+
+.SH OPTIONS
+.TP
+\fB\-\-server\fR \fI\,SERVER\/\fR
+CloudVision host[:port] (default port 443)
+
+.TP
+\fB\-\-hostname\fR \fI\,HOSTNAME\/\fR
+device hostname as shown in CloudVision inventory
+
+.TP
+\fB\-\-tag\fR \fI\,KEY=VALUE\/\fR
+device tag; must match exactly one device unless \-\-output\-dir is given
+
+.TP
+\fB\-\-ca\-file\fR \fI\,CA_FILE\/\fR
+PEM CA bundle for on\-prem CVP with a private CA
+
+.TP
+\fB\-\-output\fR \fI\,OUTPUT\/\fR
+output file (default: <device hostname>.cfg); never overwritten
+
+.TP
+\fB\-\-output\-dir\fR \fI\,OUTPUT_DIR\/\fR
+with \-\-tag: collect every device with the tag into DIR as <hostname>.cfg
+
+.TP
+\fB\-\-lldp\fR
+with \-\-output\-dir: also report LLDP links between the collected devices
+
+.TP
+\fB\-\-lab\-name\fR \fI\,LAB_NAME\/\fR
+with \-\-lldp: also write a Containerlab topology DIR/<NAME>.clab.yml
+
+.TP
+\fB\-\-image\fR \fI\,IMAGE\/\fR
+cEOS image for every topology node (with \-\-lab\-name)
+
+.TP
+\fB\-\-fixup\-rules\fR \fI\,RULES.yml\/\fR
+with \-\-lab\-name: keep originals in DIR/collected, write copies transformed by
+these rules to DIR/startup, and use those as startup configs
+
+.SH DISTRIBUTION
+The latest version of ddnetmirror may be downloaded from
+.UR https://github.com/DaphnisDuck/ddnetmirror
+.UE
