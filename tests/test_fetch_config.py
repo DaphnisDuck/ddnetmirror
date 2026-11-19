@@ -911,3 +911,18 @@ def test_force_never_touches_unrelated_files_or_directories(batch, tmp_path):
     assert yaml.safe_load((out / "lab1.clab.yml").read_text())["topology"]["nodes"] == {
         "leaf1": {}, "leaf2": {},
     }
+
+
+def test_force_regenerates_lab_with_longest_file_name(batch, tmp_path):
+    batch["lldp"] = {"SN1": [port("Ethernet1")]}
+    lab = "l" * 240  # lab1.clab.yml becomes a 249-byte name, near NAME_MAX (255)
+    argv = ("--tag", "site=lab", "--output-dir", "configs", "--lldp", "--lab-name", lab,
+            "--image", "ceos:4.35.7.2M")
+    assert run(selector=argv) == 0
+    batch["results"]["SN1"] = {"config": "! SN1 regenerated\nend\n", "errors": []}
+
+    assert run("--force", selector=argv) == 0
+
+    assert (tmp_path / "configs" / "leaf1.cfg").read_text() == "! SN1 regenerated\nend\n"
+    assert (tmp_path / "configs" / f"{lab}.clab.yml").exists()
+    assert not [p for p in (tmp_path / "configs").iterdir() if p.name.startswith(".")]

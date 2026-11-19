@@ -100,8 +100,8 @@ def write_new_file(path, text, force=False):
     data = text.encode("utf-8")
     if force:
         check_replaceable(path)
-        directory, name = os.path.split(path)
-        fd, temp = tempfile.mkstemp(dir=directory or ".", prefix=f".{name}.", suffix=".tmp")
+        # fixed short name: a long destination name must not overflow NAME_MAX
+        fd, temp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".ddn-", suffix=".tmp")
         write_fd(fd, data, temp, sync=True)
         try:
             os.replace(temp, path)
@@ -286,8 +286,10 @@ def collect_tag(
     failed. verbose prints per-device, per-rule fixup counts.
 
     force replaces existing regular files at the generated paths (one at a time,
-    via a temporary file). A device that fails keeps its previous files, which
-    are never counted as this run's output. Other files are never looked at.
+    via a temporary file). A file whose write fails keeps its previous version,
+    and a failed device never counts as this run's output. Files of that device
+    replaced before the failure (e.g. collected/<name>.cfg when its fixup fails)
+    are not restored: there is no rollback. Other files are never looked at.
     """
     label, value = selected_tag
     token = conn[2]

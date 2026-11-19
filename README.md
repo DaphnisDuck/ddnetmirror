@@ -136,7 +136,7 @@ By default nothing is ever overwritten, so the usual way to refresh a lab is a n
 - It makes **no backups**. To keep the previous lab, use a new output directory instead.
 - Each file is written to a temporary file in the same directory and then renamed over the old one, so a failed write leaves the previous complete file in place.
 - Unrelated files are never touched. Files of devices that are no longer selected (stale) are left as they are, but they are not in the new topology. The topology lists only devices that succeeded in this run.
-- A device that fails in this run keeps its previous files, is reported as failed and is left out of the topology, which is marked `INCOMPLETE` as usual.
+- A device that fails in this run is reported as failed and left out of the topology, which is marked `INCOMPLETE` as usual. A file whose write fails keeps its previous version. Files of that device that were already replaced earlier in the run are not restored; there is no rollback. For example, if a device's fixup or startup write fails, its `collected/<hostname>.cfg` is already the new config, while `startup/<hostname>.cfg` stays the old one.
 - A symbolic link, directory or other non-regular file at one of these paths is never followed or replaced. It is reported, and you remove it or use a new directory.
 - `--force` only writes files. It never touches a running lab: destroy and redeploy it yourself with Containerlab.
 
