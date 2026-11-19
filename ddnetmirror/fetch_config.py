@@ -160,6 +160,59 @@ def check_safe_name(name, hint):
         raise FetchError(f"inventory hostname {name!r} is not a safe file name{hint}")
 
 
+def token_path():
+    """$XDG_CONFIG_HOME/ddnetmirror/token, default ~/.config/ddnetmirror/token."""
+    base = os.environ.get("XDG_CONFIG_HOME", "")
+    if not os.path.isabs(base):  # unset, empty or relative: the XDG default
+        base = os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "ddnetmirror", "token")
+
+
+def read_token():
+    """Return the CloudVision token: $CLOUDVISION_TOKEN if set, else the token file.
+
+    Only reads; never writes or copies the token anywhere. The file must be a
+    regular file (not a symlink) owned by the current user with no group/other
+    permissions, in a directory that group/other cannot write. Error messages
+    name paths and modes only, never file content.
+    """
+    token = os.environ.get(TOKEN_ENV, "").strip()
+    if token:
+        return token
+    path = token_path()
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        raise FetchError(f"no CloudVision token: set {TOKEN_ENV} or create {path} "
+                         "(mode 0600, directory 0700)") from None
+    except OSError as exc:
+        if os.path.islink(path):
+            raise FetchError(f"token file {path} is a symbolic link; refusing it") from None
+        raise FetchError(f"cannot read token file {path}: {exc.strerror}") from None
+    with os.fdopen(fd, "rb") as f:
+        info = os.fstat(f.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise FetchError(f"token file {path} is not a regular file; refusing it")
+        if info.st_uid != os.geteuid():
+            raise FetchError(f"token file {path} is not owned by you; refusing it")
+        if info.st_mode & 0o077:
+            raise FetchError(f"token file {path} has mode {stat.S_IMODE(info.st_mode):04o}; "
+                             f"group/other access is refused (chmod 600 {path})")
+        directory = os.path.dirname(path)
+        dir_mode = os.stat(directory).st_mode
+        if dir_mode & 0o022:
+            raise FetchError(f"directory {directory} has mode {stat.S_IMODE(dir_mode):04o}; "
+                             f"group/other write access is refused (chmod 700 {directory})")
+        data = f.read()
+    try:
+        token = data.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        raise FetchError(f"token file {path} is not UTF-8 text") from None
+    if not token:
+        raise FetchError(f"token file {path} is empty")
+    return token
+
+
 def parse_tag(text):
     label, sep, value = text.partition("=")
     if not (sep and label and value):
@@ -202,9 +255,7 @@ def run(args):
             image = images.Selector(args.fallback_image)
         except images.ImageError as exc:
             raise FetchError(str(exc)) from None
-    token = os.environ.get(TOKEN_ENV, "").strip()
-    if not token:
-        raise FetchError(f"{TOKEN_ENV} is not set")
+    token = read_token()
     by_hostname = args.tag is None
     output = args.output or (f"{args.hostname}.cfg" if by_hostname else None)
     if output:
@@ -464,7 +515,8 @@ def build_parser(prog=None):
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Fetch running configs from CloudVision and save them unchanged. "
-        f"The service-account token is read from {TOKEN_ENV}."
+        f"The service-account token is read from {TOKEN_ENV}, or else from "
+        "$XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token)."
     )
     parser.add_argument("--server", required=True, help="CloudVision host[:port] (default port 443)")
     selector = parser.add_mutually_exclusive_group(required=True)

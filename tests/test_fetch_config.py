@@ -106,6 +106,8 @@ def cv(monkeypatch, tmp_path):
     monkeypatch.setattr(fetch_config.tag, "TagAssignmentServiceStub", FakeTagStub)
     monkeypatch.setattr(fetch_config, "ComplianceClient", FakeComplianceClient)
     monkeypatch.setenv("CLOUDVISION_TOKEN", TOKEN)
+    monkeypatch.setenv("HOME", str(tmp_path))  # never read a real token file
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.chdir(tmp_path)
     return state
 
@@ -220,12 +222,30 @@ def test_write_or_close_failure_leaves_no_file(cv, monkeypatch, tmp_path, partia
     assert list(tmp_path.iterdir()) == []
 
 
-def test_missing_token_fails(cv, monkeypatch, tmp_path):
+def test_missing_token_fails(cv, monkeypatch, tmp_path, capsys):
     monkeypatch.delenv("CLOUDVISION_TOKEN")
 
     assert run() == 1
 
     assert list(tmp_path.iterdir()) == []
+    assert (f"no CloudVision token: set CLOUDVISION_TOKEN or create {tmp_path}/xdg/ddnetmirror/token"
+            in capsys.readouterr().err)
+    assert cv["compliance_calls"] == []
+
+
+def test_token_file_is_used_without_the_environment_variable(cv, monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("CLOUDVISION_TOKEN")
+    directory = tmp_path / "xdg" / "ddnetmirror"
+    directory.mkdir(parents=True, mode=0o700)
+    (directory / "token").write_text(TOKEN + "\n")
+    (directory / "token").chmod(0o600)
+    cv["result"]["config"] = "hostname leaf1\n"
+
+    assert run() == 0
+
+    assert cv["compliance_calls"] == [("cv.example:443", TOKEN, None)]
+    out = capsys.readouterr()
+    assert TOKEN not in out.out + out.err
 
 
 def test_selects_device_by_tag(cv, tmp_path, capsys):
