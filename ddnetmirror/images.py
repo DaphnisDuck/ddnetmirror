@@ -34,17 +34,12 @@ def split_image(ref):
     return repository, tag
 
 
-DOCKER_HUB = ("docker.io/", "index.docker.io/", "registry-1.docker.io/")
-
-
 def short_repository(repository):
-    """Docker Hub names as `docker image ls` shows them: docker.io/library/ceos -> ceos,
-    docker.io/me/ceos -> me/ceos. Other registries (incl. host:port) stay as written."""
-    for prefix in DOCKER_HUB:
-        if repository.startswith(prefix):
-            repository = repository[len(prefix):]
-            break
-    return repository.removeprefix("library/") if repository.count("/") == 1 else repository
+    """docker.io/library/ceos -> ceos, the name `docker image ls` lists it under
+    (verified with Docker 29.10). Everything else, including other Docker Hub
+    spellings such as registry-1.docker.io/..., is a distinct repository as written."""
+    name = repository.removeprefix("docker.io/library/")
+    return name if name != repository and "/" not in name else repository
 
 
 def local_tags(repository):

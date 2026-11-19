@@ -62,18 +62,24 @@ def test_docker_problems_are_clear_errors(docker, change, message):
         images.Selector("ceos:4.30.7M")
 
 
-@pytest.mark.parametrize("fallback, repository", [
-    ("docker.io/library/ceos:4.30.7M", "ceos"),
-    ("index.docker.io/library/ceos:4.30.7M", "ceos"),
-    ("library/ceos:4.30.7M", "ceos"),
-    ("docker.io/me/ceos:4.30.7M", "me/ceos"),
-    ("registry.example:5000/ceos:4.30.7M", "registry.example:5000/ceos"),  # stays distinct
+def test_docker_io_library_name_matches_how_docker_lists_it(docker):
+    docker["stdout"] = "ceos:4.30.7M\nceos:4.32.1F\nother/ceos:4.32.3F\n"
+
+    selector = images.Selector("docker.io/library/ceos:4.30.7M")
+
+    assert docker["calls"][0][0][-1] == "ceos"
+    assert selector.choose("4.32.2F")[0] == "ceos:4.32.1F"
+    assert selector.choose("4.31.0F")[0] == "docker.io/library/ceos:4.30.7M"  # used as written
+
+
+@pytest.mark.parametrize("fallback", [
+    "registry-1.docker.io/library/ceos:4.30.7M",  # docker image ls does not list it as ceos
+    "registry.example:5000/ceos:4.30.7M",
 ])
-def test_docker_hub_names_match_how_docker_lists_them(docker, fallback, repository):
-    docker["stdout"] = f"{repository}:4.30.7M\n{repository}:4.32.1F\nother/ceos:4.32.3F\n"
+def test_other_registries_are_distinct_from_local_names(docker, fallback):
+    docker["stdout"] = "ceos:4.30.7M\nceos:4.32.1F\n"  # what docker shows for local ceos images
 
-    selector = images.Selector(fallback)
+    with pytest.raises(images.ImageError, match=f"fallback image {fallback} is not available locally"):
+        images.Selector(fallback)
 
-    assert docker["calls"][0][0][-1] == repository
-    assert selector.choose("4.32.2F")[0] == f"{repository}:4.32.1F"
-    assert selector.choose("4.31.0F")[0] == fallback  # the fallback is used as written
+    assert docker["calls"][0][0][-1] == fallback.rpartition(":")[0]
