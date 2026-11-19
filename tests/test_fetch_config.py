@@ -738,3 +738,20 @@ def test_fixup_rules_require_topology_generation(cv, tmp_path):
 
     assert exc.value.code == 2
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("with_topology, code", [(True, 1), (False, 2)])
+def test_empty_fixup_rules_value_is_not_ignored(batch, tmp_path, capsys, with_topology, code):
+    topology_args = ("--lldp", "--lab-name", "lab1", "--image", "ceos:4.35.7.2M") if with_topology else ()
+    selector = ("--tag", "site=lab", "--output-dir", "configs", *topology_args, "--fixup-rules", "")
+    if with_topology:
+        assert run(selector=selector) == code
+        assert "No such file" in capsys.readouterr().err
+    else:
+        with pytest.raises(SystemExit) as exc:
+            run(selector=selector)
+        assert exc.value.code == code
+        assert "--fixup-rules requires --lab-name" in capsys.readouterr().err
+
+    assert list(tmp_path.iterdir()) == []
+    assert batch["tag_filters"] == [] and batch["config_ids"] == []

@@ -142,7 +142,7 @@ def parse_server(server):
 
 def run(args):
     """Return True if every selected device was collected."""
-    rules = load_fixup_rules(args.fixup_rules) if args.fixup_rules else None
+    rules = load_fixup_rules(args.fixup_rules) if args.fixup_rules is not None else None
     token = os.environ.get(TOKEN_ENV, "").strip()
     if not token:
         raise FetchError(f"{TOKEN_ENV} is not set")
@@ -414,7 +414,7 @@ def main(argv=None):
         parser.error("--lab-name and --image must be given together")
     if args.lab_name and not args.lldp:
         parser.error("--lab-name requires --tag, --output-dir and --lldp")
-    if args.fixup_rules and not args.lab_name:
+    if args.fixup_rules is not None and not args.lab_name:
         parser.error("--fixup-rules requires --lab-name, --image, --tag, --output-dir and --lldp")
     try:
         complete = run(args)
