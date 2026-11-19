@@ -52,6 +52,30 @@ def find_device(host, port, token, ca_file, device_filter, described):
     return devices[0]
 
 
+def find_device_by_hostname(host, port, token, ca_file, hostname):
+    """Return the one inventory record whose hostname equals hostname ignoring case.
+
+    Lists the whole inventory (CloudVision filters match exactly) and compares
+    casefolded; the record keeps its CloudVision hostname. Several devices whose
+    hostnames differ only in case are an error, never a guess.
+    """
+    request = inventory.DeviceStreamRequest()
+    try:
+        devices = asyncio.run(
+            _get_all(host, port, token, ca_file, inventory.DeviceServiceStub, request)
+        )
+    except Exception as exc:
+        raise FetchError(f"inventory lookup failed: {exc}") from exc
+    wanted = hostname.casefold()
+    found = [d for d in devices if (d.hostname or "").casefold() == wanted]
+    if not found:
+        raise FetchError(f"no device with hostname {hostname!r} (any case) in inventory")
+    if len(found) > 1:
+        listed = ", ".join(f"{d.hostname} ({d.key.device_id})" for d in found)
+        raise FetchError(f"{len(found)} devices with hostname {hostname!r} ignoring case: {listed}")
+    return found[0]
+
+
 def find_tagged_device_ids(host, port, token, ca_file, label, value):
     """Return the sorted distinct device_ids assigned tag label=value (at least one)."""
     key = tag.TagAssignmentKey(
@@ -206,7 +230,7 @@ def run(args):
     if not token:
         raise FetchError(f"{TOKEN_ENV} is not set")
     by_hostname = args.tag is None
-    output = args.output or (f"{args.hostname}.cfg" if by_hostname else None)
+    output = args.output
     if output:
         ensure_absent(output)
     host, port = parse_server(args.server)
@@ -228,8 +252,7 @@ def run(args):
         )
 
     if by_hostname:
-        device_filter = inventory.Device(hostname=args.hostname)
-        device = find_device(*conn, device_filter, f"hostname {args.hostname!r}")
+        device = find_device_by_hostname(*conn, args.hostname)
     else:
         label, value = args.tag
         device_ids = find_tagged_device_ids(*conn, label, value)
@@ -239,7 +262,7 @@ def run(args):
             )
         device = find_tagged_device(*conn, label, value, device_ids[0])
     serial = device.key.device_id
-    name = args.hostname if by_hostname else (device.hostname or serial)
+    name = device.hostname or serial
     if not output:
         check_safe_name(name, "; pass --output")
         output = f"{name}.cfg"
@@ -468,7 +491,9 @@ def build_parser(prog=None):
     )
     parser.add_argument("--server", required=True, help="CloudVision host[:port] (default port 443)")
     selector = parser.add_mutually_exclusive_group(required=True)
-    selector.add_argument("--hostname", help="device hostname as shown in CloudVision inventory")
+    selector.add_argument(
+        "--hostname", help="device hostname as shown in CloudVision inventory (any case)"
+    )
     selector.add_argument("--tag", type=parse_tag, metavar="KEY=VALUE", help="device tag; must match exactly one device unless --output-dir is given")
     parser.add_argument("--ca-file", help="PEM CA bundle for on-prem CVP with a private CA")
     outputs = parser.add_mutually_exclusive_group()
