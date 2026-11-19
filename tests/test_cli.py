@@ -44,3 +44,20 @@ def test_missing_or_unknown_command_is_a_usage_error(capsys, argv, message):
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert err.startswith("usage: ddn") and message in err
+
+
+
+def test_leading_double_dash_reaches_the_subcommand(tmp_path, capsys):
+    # After "--" everything is positional, so the alias rejects this; ddn must too
+    # (it used to swallow the "--" and succeed).
+    argv = ["--", "in.cfg", "--rules", "r.yml", "--output", str(tmp_path / "out.cfg")]
+    results = []
+    for main, prog in [(lambda a: cli.main(["fixup", *a]), "ddn fixup"),
+                       (lambda a: fixup.main(a, prog="ddnetmirror-fixup"), "ddnetmirror-fixup")]:
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        results.append((exc.value.code, capsys.readouterr().err.replace(prog, "PROG")))
+
+    assert results[0] == results[1]
+    assert results[0][0] == 2 and "required: --rules, --output" in results[0][1]
+    assert not (tmp_path / "out.cfg").exists()

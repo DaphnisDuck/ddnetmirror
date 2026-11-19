@@ -19,10 +19,12 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("command", choices=COMMANDS, metavar="COMMAND", help="fetch or fixup")
-    parser.add_argument("args", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
-    args = parser.parse_args(argv)
+    argv = sys.argv[1:] if argv is None else list(argv)
+    # Parse only the command word (or -h / a usage error); everything after it,
+    # including a leading "--", goes to the subcommand verbatim.
+    args = parser.parse_args(argv[:1])
     command, _ = COMMANDS[args.command]
-    return command(args.args, prog=f"ddn {args.command}")
+    return command(argv[1:], prog=f"ddn {args.command}")
 
 
 if __name__ == "__main__":
