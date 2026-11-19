@@ -212,7 +212,7 @@ A rule file is a YAML list, and rules run in order, each on the previous rule's 
 | `replace` | `match`, `with` | Replaces matches in every line (regex mode uses `re.sub`, so `\1` works). |
 | `delete-line` | `match` | Removes matching lines only; their indented children stay. |
 | `delete-block` | `match` | Removes each matching line plus the following more-indented lines. The block ends at the next non-blank line with equal or lesser indentation, such as an unindented `!`, which is kept. |
-| `insert-if-missing` | `match`, `text` | If no line matches, appends `text` verbatim at the end of the file. |
+| `insert-if-missing` | `match`, `text`, optional `before` | If no line matches, appends `text` verbatim at the end of the file, or inserts it just before the one line matching `before`. |
 | `collapse-separators` | (none) | Merges each run of directly adjacent, unindented lines that are exactly `!` into one. Blank lines end a run; indented `!` lines and `!` comments (e.g. `! Command: show running-config`) are never touched. |
 
 Example (synthetic):
@@ -248,7 +248,13 @@ Rules are plain text editing:
 - Untouched text and line endings are kept byte for byte.
 - ddnetmirror does no automatic `!` separator normalisation. Your rules still change separators where they say so: inserted text can add `!` lines, deleting blocks can remove `!` lines or leave two in a row, and `collapse-separators` (only if you list it) merges such runs.
 - `insert-if-missing` first ends an unterminated last line (using the file's line ending), then appends the fragment verbatim.
-- A rule file is fully validated before use: unknown ops or fields, bad regexes and bad `\N` references are all rejected.
+- `insert-if-missing` with `before`:
+  - Example: `- {op: insert-if-missing, match: '^maintenance$', regex: true, before: '^end$', text: "maintenance\n"}` puts `maintenance` above the final `end`.
+  - The fragment goes in verbatim immediately before the anchor line, which is left unchanged. If the fragment lacks a final newline, it gets the anchor's line ending.
+  - `before` is checked only when nothing matches `match`; if the text is already there, nothing happens.
+  - `regex` applies to both fields. With `regex: true`, `before` is a Python regex searched in each line, like `match`. Without it, `before` must equal a whole line (`before: end` matches `end` but not `! end of bgp`), whereas a literal `match` is a substring.
+  - If `before` matches no line or more than one line, the rule fails with an error and no output is written for that file (with `ddn fetch`, that device's startup config; its collected original is kept).
+- A rule file is fully validated before use: unknown ops or fields, bad regexes (including `before`) and bad `\N` references are all rejected.
 - Every rule applies to every device. Rename hostnames with a `replace` rule if you want to; ddnetmirror never does it on its own.
 
 ## When things go wrong

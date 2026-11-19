@@ -17,7 +17,7 @@ OPS = {
     "replace": ({"match", "with"}, {"regex"}),
     "delete-line": ({"match"}, {"regex"}),
     "delete-block": ({"match"}, {"regex"}),
-    "insert-if-missing": ({"match", "text"}, {"regex"}),
+    "insert-if-missing": ({"match", "text"}, {"regex", "before"}),
     "collapse-separators": (set(), set()),
 }
 
@@ -52,12 +52,22 @@ class Rule:
         self.match = spec.get("match")
         self.replacement = spec.get("with")
         self.text = spec.get("text")
+        self.before = spec.get("before")
+        if "before" in spec and (not isinstance(self.before, str) or not self.before):
+            raise RuleError(f"{where} ({self.op}): before must be a non-empty string")
         self.name = f"{where} {self.op}"
         if self.regex:
             try:
                 self.pattern = re.compile(self.match)
             except re.error as exc:
                 raise RuleError(f"{where} ({self.op}): invalid regex {self.match!r}: {exc}") from None
+            if self.before is not None:
+                try:
+                    self.before_pattern = re.compile(self.before)
+                except re.error as exc:
+                    raise RuleError(
+                        f"{where} ({self.op}): invalid before regex {self.before!r}: {exc}"
+                    ) from None
             if self.op == "replace":
                 try:
                     check_template(self.pattern, self.replacement)
@@ -70,6 +80,12 @@ class Rule:
         if self.regex:
             return self.pattern.search(content) is not None
         return self.match in content
+
+    def is_anchor(self, content):
+        """before: re.search with regex: true, else the whole line must equal it."""
+        if self.regex:
+            return self.before_pattern.search(content) is not None
+        return content == self.before
 
 
 def check_template(pattern, template):
@@ -171,7 +187,19 @@ def apply_rule(rule, lines):
         return collapse_separators(lines)
     # insert-if-missing
     if any(rule.matches(line[0]) for line in lines):
-        return lines, 0, "match present, nothing inserted"
+        return lines, 0, "match present, nothing inserted"  # before is not looked at
+    if rule.before is not None:
+        anchors = [i for i, line in enumerate(lines) if rule.is_anchor(line[0])]
+        if len(anchors) != 1:
+            found = "no line" if not anchors else f"{len(anchors)} lines"
+            raise RuleError(f"{rule.name}: before {rule.before!r} matches {found}, "
+                            "expected exactly one; nothing inserted")
+        at = anchors[0]
+        fragment = split_lines(rule.text)  # verbatim, like the append below
+        if fragment and not fragment[-1][1]:  # end it so the anchor stays on its own line
+            fragment[-1][1] = lines[at][1] or lines[0][1] or "\n"
+        lines[at:at] = fragment
+        return lines, len(fragment), "fragment inserted"
     if lines and not lines[-1][1]:
         lines[-1][1] = lines[0][1] if lines[0][1] else "\n"  # end the last line first
     fragment = split_lines(rule.text)  # verbatim; split only so later rules see lines
