@@ -8,13 +8,14 @@ version = "0.0.1"
 description = "Query Arista CVP/CVaaS and generate Containerlab digital twins"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-dependencies = ["cloudvision>=1.35.0"]
+dependencies = ["cloudvision>=1.35.0", "PyYAML>=6.0"]
 
 [project.optional-dependencies]
 test = ["pytest"]
 
 [project.scripts]
 ddnetmirror-fetch-config = "ddnetmirror.fetch_config:main"
+ddnetmirror-fixup = "ddnetmirror.fixup:main"
 
 [tool.setuptools]
 packages = ["ddnetmirror"]
