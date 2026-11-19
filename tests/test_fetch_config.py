@@ -294,15 +294,11 @@ def test_tag_does_not_overwrite_default_output(cv, tmp_path):
         ("--hostname", "leaf1", "--output-dir", "configs"),
         ("--tag", "role=leaf", "--output", "x.cfg", "--output-dir", "configs"),
         ("--tag", "role=leaf", "--lldp"),
-        ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "lab1"),
+        ("--tag", "s=l", "--output-dir", "c", "--lldp", "--image", "ceos:1"),  # needs --lab-name
         ("--tag", "s=l", "--output-dir", "c", "--lab-name", "lab1", "--image", "ceos:1"),
         ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "-lab", "--image", "ceos:1"),
         ("--hostname", "leaf1", "--force"),  # --force only for generated lab directories
-        ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "lab1", "--image", "auto"),
-        ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "lab1", "--image", "ceos:1",
-         "--fallback-image", "ceos:2"),
-        ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "lab1", "--image", "auto",
-         "--fallback-image", "ceos"),  # a tag is required
+        ("--tag", "s=l", "--output-dir", "c", "--lldp", "--image", "auto"),  # needs --lab-name
         (),
     ],
 )
@@ -947,51 +943,75 @@ def fake_docker(monkeypatch, tags, returncode=0):
     return calls
 
 
-AUTO_ARGS = ("--tag", "site=lab", "--output-dir", "configs", "--lldp", "--lab-name", "lab1",
-             "--image", "auto", "--fallback-image", "ceos:4.30.7M")
+AUTO_ARGS = ("--tag", "site=lab", "--output-dir", "configs", "--lldp", "--lab-name", "lab1")
 
 
-def test_image_auto_overrides_only_nodes_with_another_image(batch, tmp_path, capsys, monkeypatch):
-    # leaf1 EOS 4.32.1F: exact; leaf2 4.31.0F: no 4.31 image; spine1: version unknown
-    fake_docker(monkeypatch, ["4.30.7M", "4.32.1F", "4.32.2F"])
+def test_default_picks_per_device_and_overrides_only_the_less_used_images(
+    batch, tmp_path, capsys, monkeypatch
+):
+    # leaf1 EOS 4.32.1F: exact; leaf2 4.31.0F: no 4.31 train, nearest 4.30/4.32 -> newer;
+    # spine1: version unknown -> newest
+    calls = fake_docker(monkeypatch, ["4.30.7M", "4.32.1F", "4.32.2F", "latest"])
     batch["lldp"] = {"SN1": [nbr("Ethernet1", "spine1", "Ethernet49/1")], "SN3": [port("Ethernet49/1")]}
 
-    assert fetch_config.main(["--server", "cv.example:443", *AUTO_ARGS]) == 0
+    assert run(selector=AUTO_ARGS) == 0
 
+    assert calls == [["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}", "ceos"]]
     text = (tmp_path / "configs" / "lab1.clab.yml").read_text()
     parsed = yaml.safe_load(text)["topology"]
-    assert parsed["defaults"]["image"] == "ceos:4.30.7M"
+    assert parsed["defaults"]["image"] == "ceos:4.32.2F"  # used by two of three nodes
     assert parsed["nodes"] == {"leaf1": {"image": "ceos:4.32.1F"}, "leaf2": {}, "spine1": {}}
-    assert parsed["defaults"]["startup-config"] == "__clabNodeName__.cfg"
-    assert "# Images: --image auto, by EOS version from local ceos images; default is the " \
-           "fallback ceos:4.30.7M. Not a compatibility check." in text
-    out = capsys.readouterr().out
+    assert "# Images: picked per device by EOS version from local ceos images; default is the " \
+           "most used, ceos:4.32.2F. Not a compatibility check." in text
+    out, err = capsys.readouterr()
+    assert "note: ignoring local images without a version tag: ceos:latest" in out
     assert "image for leaf1 (EOS 4.32.1F): ceos:4.32.1F (exact match)" in out
-    assert "image for leaf2 (EOS 4.31.0F): ceos:4.30.7M (fallback: no local ceos image in the 4.31 train)" in out
-    assert "image for spine1 (EOS unknown): ceos:4.30.7M (fallback: EOS version unknown)" in out
+    assert ("image for leaf2 (EOS 4.31.0F): ceos:4.32.2F (no local image in the 4.31 train; "
+            "newest in the nearest train 4.32)") in out
+    assert "image for spine1 (EOS unknown): ceos:4.32.2F (EOS version unknown; newest local image)" in out
+    assert ("warning: leaf2 gets ceos:4.32.2F from another release train than its EOS 4.31.0F; "
+            "version matching does not establish configuration compatibility") in err
+    assert err.count("warning:") == 1  # only the cross-train pick
 
-    # regenerate with --force while leaf1 fails: its node and override disappear
-    batch["results"]["SN1"] = {"config": "", "errors": ["unavailable"]}
-    batch["versions"]["SN2"] = "4.32.3F"
-    assert fetch_config.main(["--server", "cv.example:443", *AUTO_ARGS, "--force"]) == 1
 
-    parsed = yaml.safe_load((tmp_path / "configs" / "lab1.clab.yml").read_text())["topology"]
-    assert parsed["nodes"] == {"leaf2": {"image": "ceos:4.32.2F"}, "spine1": {}}
-    assert "(closest in the 4.32 train (version match only, not a compatibility check))" \
-        in capsys.readouterr().out
+def test_legacy_image_auto_is_the_default_with_a_notice(batch, tmp_path, capsys, monkeypatch):
+    fake_docker(monkeypatch, ["4.30.7M", "4.32.1F", "4.32.2F"])
+    batch["lldp"] = {"SN1": [port("Ethernet1")]}
+    assert run(selector=AUTO_ARGS) == 0
+    # everything but the first header line (the generation time)
+    default = (tmp_path / "configs" / "lab1.clab.yml").read_text().split("\n", 1)[1]
+    capsys.readouterr()
+
+    assert run("--image", "auto", "--force", selector=AUTO_ARGS) == 0
+
+    assert (tmp_path / "configs" / "lab1.clab.yml").read_text().split("\n", 1)[1] == default
+    assert "note: --image auto is no longer needed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("image", ["auto", "ceos:4.30.7M"])
+def test_fallback_image_is_refused_pointing_to_the_default(cv, tmp_path, capsys, image):
+    with pytest.raises(SystemExit) as exc:
+        run("--image", image, "--fallback-image", "ceos:4.30.7M", selector=AUTO_ARGS)
+
+    assert exc.value.code == 2
+    assert "--fallback-image was removed: without --image, a local ceos image is picked" in (
+        capsys.readouterr().err
+    )
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("tags, returncode, message", [
-    (["4.32.1F"], 0, "fallback image ceos:4.30.7M is not available locally"),
+    (["latest"], 0, "no local ceos image with a version tag such as ceos:4.34.2F "
+                    "(local ceos tags: latest); import one, or pass --image IMAGE"),
     ([], 1, "'docker image ls' failed: permission denied"),
 ])
-def test_image_auto_problems_stop_before_collection(batch, tmp_path, capsys, monkeypatch,
-                                                    tags, returncode, message):
+def test_image_problems_stop_before_any_cloudvision_call(batch, tmp_path, capsys, monkeypatch,
+                                                         tags, returncode, message):
     fake_docker(monkeypatch, tags, returncode)
 
     assert run(selector=AUTO_ARGS) == 1
 
-    assert batch["tag_filters"] == [] and batch["config_ids"] == []
+    assert batch["filters"] == batch["tag_filters"] == batch["config_ids"] == []
     assert list(tmp_path.iterdir()) == []
     assert message in capsys.readouterr().err
 

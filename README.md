@@ -131,33 +131,37 @@ Smaller steps of the same command, each leaving out more options:
 - **LLDP report only:** omit `--fixup-rules`, `--lab-name` and `--image`. The configs are collected and the links are printed; no topology is written.
 - **Collection only:** additionally omit `--lldp`. `--output-dir` only collects the configs.
 
-### Pick images by EOS version: `--image auto`
+### Images: picked by EOS version unless you pass `--image`
 
-Instead of one image for every node, `--image auto --fallback-image REPOSITORY:TAG` picks a local image per device from the EOS version that CloudVision inventory reports:
+With `--lab-name` and no `--image`, a local `ceos` image is picked per device from the EOS version that CloudVision inventory reports:
 
 ```sh
-.venv/bin/ddn fetch --server www.arista.io --tag site=lab --output-dir lab1 --lldp \
-    --lab-name lab1 --image auto --fallback-image ceos:4.33.11.2M
+.venv/bin/ddn fetch --server www.arista.io --tag site=lab --output-dir lab1 --lldp --lab-name lab1
 ```
 
 ```
-image for leaf1 (EOS 4.34.2F): ceos:4.33.11.2M (fallback: no local ceos image in the 4.34 train)
-image for leaf2 (EOS unknown): ceos:4.33.11.2M (fallback: EOS version unknown)
+image for leaf1 (EOS 4.34.2F): ceos:4.35.7.2M (no local image in the 4.34 train; newest in the nearest train 4.35)
+warning: leaf1 gets ceos:4.35.7.2M from another release train than its EOS 4.34.2F; version matching does not establish configuration compatibility
+image for leaf2 (EOS unknown): ceos:4.35.7.2M (EOS version unknown; newest local image)
 image for spine1 (EOS 4.35.7.2M): ceos:4.35.7.2M (exact match)
-image for spine2 (EOS 4.35.7.2M): ceos:4.35.7.2M (exact match)
+image for spine2 (EOS 4.33.1F): ceos:4.33.11.2M (newest in the 4.33 train)
 ```
 
 How it works:
-- **Local images only.** It runs `docker image ls REPOSITORY` once, before anything is fetched, and looks only at the tags of the fallback's repository (here `ceos`). It never pulls, builds or queries a registry. The fallback image must exist locally. If Docker is missing, not accessible (for example, you are not in the `docker` group), or the fallback is absent, the command stops with an error before contacting CloudVision.
+- **Local images only.** It runs `docker image ls ceos` once, before contacting CloudVision, and uses the local `ceos` images whose tag is a version (`MAJOR.MINOR.PATCH[.BUILD][F/M]`, e.g. `ceos:4.35.7.2M`). Other tags such as `latest` are ignored and reported. It never pulls, builds or queries a registry.
+- **It stops with an error before contacting CloudVision** if Docker is missing or not accessible (for example, you are not in the `docker` group), or if there is no version-tagged `ceos` image.
 - **Matching, per device:**
   1. a tag equal to the EOS version (exact match);
-  2. otherwise the closest tag in the same `MAJOR.MINOR` train: the smallest difference in the third number, then in the fourth. Ties go to the tag with the same letter suffix (`F`/`M`), then to the newer version;
-  3. otherwise (no image in that train, or an unknown or unusual version such as `4.32.1F-INT`) the fallback. It never picks an image from another train.
-- Tags that aren't versions (e.g. `latest`) are ignored as candidates and reported.
-- **In the topology,** the fallback is `defaults.image`. Only nodes that get a different image have `image:` set on the node. The header notes that images were picked automatically.
-- **This is version matching, not a compatibility check.** A matching image does not mean the config runs cleanly on it, and the `F`/`M` suffix is only used to break ties.
+  2. otherwise the newest version in the same `MAJOR.MINOR` train;
+  3. otherwise the newest version in the nearest train. When two trains are equally near, the newer one wins. This cross-train pick is printed as a `warning:`;
+  4. if the version is unknown or not recognized (e.g. `4.32.1F-INT`), the newest local image.
+- **Comparison details:**
+  - Versions compare numerically (`4.34.10F` is newer than `4.34.9M`). On equal numbers, `M` counts as newer than `F`.
+  - The EOS/EOS64 distinction is ignored: `4.34.2F-EOS64` and `EOS64-4.34.2F` are matched as `4.34.2F`.
+- **In the topology,** `defaults.image` is the image most nodes got. On a tie, it is the image of the first such node by name. Only the other nodes have `image:` set on the node. The header notes that images were picked automatically.
+- **This is version matching, not a compatibility check.** A matching image does not mean the config runs cleanly on it.
 
-Plain `--image IMAGE` is unchanged and never runs Docker.
+`--image IMAGE` (with `--lab-name`) uses that image for every node and never runs Docker. `--image auto` from earlier versions still works and behaves the same as leaving out `--image`, with a note that it is no longer needed. `--fallback-image` was removed and is refused with an error.
 
 ### Regenerate a lab in place: `--force`
 
@@ -272,7 +276,7 @@ Rules are plain text editing:
 - **Live CVP/CVaaS compatibility is unverified** (#7). The CloudVision calls follow the `cloudvision` Python library's source and examples.
   - The code is tested against stubbed responses (`pytest`).
   - It was also tested in a human-run synthetic test drive (#22): Containerlab 0.83.0 with `ceos:4.35.7.2M`, four nodes, BGP and ECMP up, and the slash-form link `Ethernet49/1` ↔ `eth49_1` passing traffic.
-- **Image choice is by version string only.** `--image IMAGE` applies to every node. `--image auto` matches local tags to inventory versions (see above) but knows nothing about platforms or compatibility. You can always override a node in the YAML by hand.
+- **Image choice is by version string only.** `--image IMAGE` applies to every node. Without it, local `ceos` tags are matched to inventory versions (see above), with no knowledge of platforms or compatibility. You can always override a node in the YAML by hand.
 - **LLDP matching is conservative.** A neighbour becomes a link only if:
   - its LLDP system name exactly matches the hostname of one selected device;
   - its port ID is an LLDP interface that device itself reports.
