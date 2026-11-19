@@ -643,10 +643,11 @@ def test_topology_rejects_reserved_endpoint_node_name(batch, tmp_path, capsys):
 FIXUP_RULES = "- {op: replace, match: '^! (SN\\d)', with: '! lab-\\1', regex: true}\n"
 
 
-def run_fixups(tmp_path, rules=FIXUP_RULES):
+def run_fixups(tmp_path, rules=FIXUP_RULES, *extra):
     if rules is not None:
         (tmp_path / "rules.yml").write_text(rules)
     return run(
+        *extra,
         selector=("--tag", "site=lab", "--output-dir", "configs", "--lldp",
                   "--lab-name", "lab1", "--image", "ceos:4.35.7.2M", "--fixup-rules", "rules.yml"),
     )
@@ -682,7 +683,23 @@ def test_fixups_write_startup_copies_used_by_topology(batch, tmp_path, capsys):
         '  links:\n    # one-sided: LLDP reported this link from one end only\n'
         '    - endpoints: ["leaf1:eth1", "spine1:eth49_1"]\n'
     )
-    assert "wrote 3 of 3 startup configs" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "wrote 3 of 3 startup configs" in out
+    assert "fixup leaf1:" not in out  # per-rule lines only with --verbose
+
+
+def test_verbose_fixups_report_each_rule_per_device(batch, tmp_path, capsys):
+    batch["lldp"] = {"SN1": [nbr("Ethernet1", "spine1", "Ethernet49/1")], "SN3": [port("Ethernet49/1")]}
+    rules = FIXUP_RULES + "- {op: delete-block, match: nothing-matches}\n"
+
+    assert run_fixups(tmp_path, rules, "--verbose") == 0
+
+    out = capsys.readouterr().out
+    assert "café" not in out and "lab-SN" not in out  # no config or replacement text
+    for name in batch["hostnames"].values():
+        assert (f"fixup {name}: rule 1 replace: 1 line(s) affected (1 line(s) replaced)\n"
+                f"fixup {name}: rule 2 delete-block: 0 line(s) affected (0 block(s) removed)\n") in out
+    assert (tmp_path / "configs" / "startup" / "leaf1.cfg").read_bytes() == "! lab-SN1 café\r\nend".encode()
 
 
 @pytest.mark.parametrize("failure", ["rule error", "existing startup file"])
@@ -700,10 +717,10 @@ def test_fixup_failure_keeps_original_and_drops_only_that_node(
     if failure == "rule error":
         apply_rules = fixup.apply_rules
 
-        def flaky(rules, text, report):
+        def flaky(rules, text, **kwargs):
             if "SN2" in text:
                 raise RuntimeError("boom")
-            return apply_rules(rules, text, report)
+            return apply_rules(rules, text, **kwargs)
 
         monkeypatch.setattr(fixup, "apply_rules", flaky)
     else:

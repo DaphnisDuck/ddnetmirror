@@ -3,7 +3,7 @@
 ddn fixup \- apply text fixup rules to a copy of a config file
 .SH SYNOPSIS
 .B ddn
-fixup [-h] --rules RULES --output OUTPUT input
+fixup [-h] [--verbose] (input --rules RULES --output OUTPUT | --check RULES)
 .SH DESCRIPTION
 Apply text fixup rules to a copy of a config file. The input is never modified; the output is a new file.
 
@@ -19,6 +19,15 @@ YAML rule file
 .TP
 \fB\-\-output\fR \fI\,OUTPUT\/\fR
 new output file; never overwritten
+
+.TP
+\fB\-\-verbose\fR
+also name what each rule changed (blocks, fragments, separator runs); never
+prints config text
+
+.TP
+\fB\-\-check\fR \fI\,RULES\/\fR
+only validate a rule file: reads no config and writes nothing
 
 .SH DISTRIBUTION
 The latest version of ddnetmirror may be downloaded from

@@ -166,7 +166,7 @@ def run(args):
             lab = (args.lab_name, args.image)
             ensure_absent(topology_path(args.output_dir, args.lab_name))
         return collect_tag(
-            conn, server, ca_bytes, args.tag, args.output_dir, args.lldp, lab, rules
+            conn, server, ca_bytes, args.tag, args.output_dir, args.lldp, lab, rules, args.verbose
         )
 
     if by_hostname:
@@ -201,11 +201,13 @@ def load_fixup_rules(path):
         raise FetchError(f"{path}: {exc}") from None
 
 
-def write_startup(rules, name, config, output):
-    """Apply the fixup rules to a copy of config and write it as a new file."""
+def write_startup(rules, name, config, output, verbose=False):
+    """Apply the fixup rules to a copy of config and write it as a new file.
+    With verbose, print what each rule changed (never config text)."""
     from ddnetmirror import fixup
 
-    write_new_file(output, fixup.apply_rules(rules, config, report=lambda _: None))
+    report = (lambda line: print(f"fixup {name}: {line}")) if verbose else (lambda _: None)
+    write_new_file(output, fixup.apply_rules(rules, config, report=report, verbose=verbose))
     print(f"wrote startup config for {name} with fixups to {output}")
 
 
@@ -223,7 +225,8 @@ def topology_path(output_dir, lab_name):
 
 
 def collect_tag(
-    conn, server, ca_bytes, selected_tag, output_dir, report_lldp=False, lab=None, rules=None
+    conn, server, ca_bytes, selected_tag, output_dir, report_lldp=False, lab=None, rules=None,
+    verbose=False,
 ):
     """Collect every device with the tag into output_dir, sequentially.
 
@@ -236,7 +239,7 @@ def collect_tag(
     With fixup rules, originals go to output_dir/collected and a transformed copy
     of each to output_dir/startup; the topology then lists only devices with a
     startup config. A device whose fixup fails keeps its original and counts as
-    failed.
+    failed. verbose prints per-device, per-rule fixup counts.
     """
     label, value = selected_tag
     token = conn[2]
@@ -280,7 +283,8 @@ def collect_tag(
             continue
         if rules:
             try:
-                write_startup(rules, name, config, os.path.join(output_dir, STARTUP, f"{name}.cfg"))
+                write_startup(rules, name, config, os.path.join(output_dir, STARTUP, f"{name}.cfg"),
+                              verbose)
                 startup.add(name)
             except Exception as exc:  # the original stays; only this device is affected
                 fail(label_for_report, f"fixup failed, original kept: {exc}", fixup_failures)
@@ -411,6 +415,12 @@ def build_parser(prog=None):
         help="with --lab-name: keep originals in DIR/collected, write copies transformed "
         "by these rules to DIR/startup, and use those as startup configs",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="with --fixup-rules: print what each rule changed per device; "
+        "never prints config text",
+    )
     return parser
 
 
@@ -427,6 +437,8 @@ def main(argv=None, prog=None):
         parser.error("--lab-name requires --tag, --output-dir and --lldp")
     if args.fixup_rules is not None and not args.lab_name:
         parser.error("--fixup-rules requires --lab-name, --image, --tag, --output-dir and --lldp")
+    if args.verbose and args.fixup_rules is None:
+        parser.error("--verbose requires --fixup-rules")
     try:
         complete = run(args)
     except (FetchError, OSError) as exc:

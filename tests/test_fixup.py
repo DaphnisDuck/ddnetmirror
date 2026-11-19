@@ -93,6 +93,48 @@ def test_replacement_with_line_break_is_split_for_later_rules():
     assert apply(rules, text) == "hostname lab-leaf1\r\n!\r\nend\r\n"
 
 
+def test_collapse_separators_only_merges_adjacent_unindented_bang_lines():
+    text = (
+        "! Command: show running-config\r\n"
+        "!\r\n"
+        "!\r\n"
+        "!\r\n"
+        "hostname leaf1\r\n"
+        "!\r\n"
+        "\r\n"
+        "!\r\n"
+        "router bgp 1\r\n"
+        "   !\r\n"
+        "   !\r\n"
+        "!\r\n"
+        "! end of bgp\r\n"
+        "!\r\n"
+        "!"  # no final newline
+    )
+    assert apply("- op: collapse-separators", text) == (
+        "! Command: show running-config\r\n"
+        "!\r\n"
+        "hostname leaf1\r\n"
+        "!\r\n"
+        "\r\n"
+        "!\r\n"
+        "router bgp 1\r\n"
+        "   !\r\n"
+        "   !\r\n"
+        "!\r\n"
+        "! end of bgp\r\n"
+        "!"
+    )
+
+
+def test_collapse_separators_sees_earlier_rules_output():
+    text = "hostname leaf1\n!\ndaemon TerminAttr\n   no shutdown\n!\nend\n"
+    collapse_then_delete = "- op: collapse-separators\n- {op: delete-block, match: daemon}"
+    delete_then_collapse = "- {op: delete-block, match: daemon}\n- op: collapse-separators"
+    assert apply(collapse_then_delete, text) == "hostname leaf1\n!\n!\nend\n"
+    assert apply(delete_then_collapse, text) == "hostname leaf1\n!\nend\n"
+
+
 @pytest.mark.parametrize("template", ["\\2", "\\g<nope>", "\\g<1", "\\q"])
 def test_invalid_replacement_template_is_rejected_at_load(template):
     rules = f"- {{op: replace, match: 'host(name)', regex: true, with: '{template}'}}"
@@ -187,6 +229,7 @@ def test_cli_writes_new_owner_only_file_and_keeps_original(tmp_path):
         ("- {op: delete-line, match: x, regx: true}", "unknown field regx"),
         ("rules: [", "not valid YAML"),
         ("- {op: replace, match: 'x(y)', with: '\\2', regex: true}", "invalid replacement"),
+        ("- {op: collapse-separators, match: '!'}", "unknown field match"),
     ],
 )
 def test_bad_rule_file_fails_without_output(tmp_path, capsys, rules, message):
@@ -199,3 +242,55 @@ def test_bad_rule_file_fails_without_output(tmp_path, capsys, rules, message):
 
     assert not out.exists()
     assert message in capsys.readouterr().err
+
+
+VERBOSE_RULES = """\
+- {op: replace, match: leaf1, with: lab-leaf1}
+- {op: delete-line, match: nothing-matches}
+- {op: delete-block, match: daemon TerminAttr}
+- {op: insert-if-missing, match: '^end$', regex: true, text: "end\\n"}
+- op: collapse-separators
+"""
+VERBOSE_INPUT = "hostname leaf1\n!\ndaemon TerminAttr\n   no shutdown\n!\nend\n"
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+def test_cli_reports_each_rule_and_verbose_adds_only_detail(tmp_path, capsys, verbose):
+    (tmp_path / "in.cfg").write_text(VERBOSE_INPUT)
+    (tmp_path / "rules.yml").write_text(VERBOSE_RULES)
+    out = tmp_path / "out.cfg"
+    args = [str(tmp_path / "in.cfg"), "--rules", str(tmp_path / "rules.yml"), "--output", str(out)]
+
+    assert fixup.main(args + ["--verbose"] * verbose) == 0
+
+    details = [" (1 line(s) replaced)", " (0 line(s) deleted)", " (1 block(s) removed)",
+               " (match present, nothing inserted)", " (1 separator run(s) collapsed)"]
+    lines = ["rule 1 replace: 1 line(s) affected", "rule 2 delete-line: 0 line(s) affected",
+             "rule 3 delete-block: 2 line(s) affected", "rule 4 insert-if-missing: 0 line(s) affected",
+             "rule 5 collapse-separators: 1 line(s) affected"]
+    expected = [line + (detail if verbose else "") for line, detail in zip(lines, details)]
+    assert capsys.readouterr().out.splitlines() == [*expected, f"wrote {out}"]
+    assert out.read_text() == "hostname lab-leaf1\n!\nend\n"
+
+
+@pytest.mark.parametrize("rules, code, message", [
+    (VERBOSE_RULES, 0, "rules.yml: 5 rule(s) OK"),
+    ("- {op: delete-line, match: '(', regex: true}", 1, "rule 1 (delete-line): invalid regex"),
+])
+def test_check_validates_rules_only(tmp_path, capsys, monkeypatch, rules, code, message):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "rules.yml").write_text(rules)
+
+    assert fixup.main(["--check", "rules.yml"]) == code
+
+    assert message in "".join(capsys.readouterr())
+    assert [p.name for p in tmp_path.iterdir()] == ["rules.yml"]
+
+
+def test_check_rejects_input_and_output_arguments(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        fixup.main(["--check", "rules.yml", "in.cfg", "--output", str(tmp_path / "out.cfg")])
+
+    assert exc.value.code == 2
+    assert "--check takes only a rule file" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
