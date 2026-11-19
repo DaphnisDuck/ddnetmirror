@@ -195,8 +195,7 @@ def apply_rules(rules, text, report=print, verbose=False):
 def build_parser(prog=None):
     parser = argparse.ArgumentParser(
         prog=prog,
-        usage="%(prog)s [-h] [--verbose] input --rules RULES --output OUTPUT\n"
-        "       %(prog)s --check RULES",
+        usage="%(prog)s [-h] [--verbose] (input --rules RULES --output OUTPUT | --check RULES)",
         description="Apply text fixup rules to a copy of a config file. "
         "The input is never modified; the output is a new file."
     )
