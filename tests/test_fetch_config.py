@@ -2,13 +2,14 @@ import contextlib
 import os
 import re
 import stat
+import subprocess
 
 import pytest
 import yaml
 from cloudvision.api.arista.inventory import v1 as inventory
 from cloudvision.api.arista.tag import v2 as tag
 
-from ddnetmirror import cli, fetch_config, topology
+from ddnetmirror import cli, fetch_config, images, topology
 
 TOKEN = "secret-token-value"
 
@@ -297,6 +298,11 @@ def test_tag_does_not_overwrite_default_output(cv, tmp_path):
         ("--tag", "s=l", "--output-dir", "c", "--lab-name", "lab1", "--image", "ceos:1"),
         ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "-lab", "--image", "ceos:1"),
         ("--hostname", "leaf1", "--force"),  # --force only for generated lab directories
+        ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "lab1", "--image", "auto"),
+        ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "lab1", "--image", "ceos:1",
+         "--fallback-image", "ceos:2"),
+        ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "lab1", "--image", "auto",
+         "--fallback-image", "ceos"),  # a tag is required
         (),
     ],
 )
@@ -926,3 +932,77 @@ def test_force_regenerates_lab_with_longest_file_name(batch, tmp_path):
     assert (tmp_path / "configs" / "leaf1.cfg").read_text() == "! SN1 regenerated\nend\n"
     assert (tmp_path / "configs" / f"{lab}.clab.yml").exists()
     assert not [p for p in (tmp_path / "configs").iterdir() if p.name.startswith(".")]
+
+
+def fake_docker(monkeypatch, tags, returncode=0):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command, returncode, "".join(f"ceos:{t}\n" for t in tags), "permission denied"
+        )
+
+    monkeypatch.setattr(images.subprocess, "run", fake_run)
+    return calls
+
+
+AUTO_ARGS = ("--tag", "site=lab", "--output-dir", "configs", "--lldp", "--lab-name", "lab1",
+             "--image", "auto", "--fallback-image", "ceos:4.30.7M")
+
+
+def test_image_auto_overrides_only_nodes_with_another_image(batch, tmp_path, capsys, monkeypatch):
+    # leaf1 EOS 4.32.1F: exact; leaf2 4.31.0F: no 4.31 image; spine1: version unknown
+    fake_docker(monkeypatch, ["4.30.7M", "4.32.1F", "4.32.2F"])
+    batch["lldp"] = {"SN1": [nbr("Ethernet1", "spine1", "Ethernet49/1")], "SN3": [port("Ethernet49/1")]}
+
+    assert fetch_config.main(["--server", "cv.example:443", *AUTO_ARGS]) == 0
+
+    text = (tmp_path / "configs" / "lab1.clab.yml").read_text()
+    parsed = yaml.safe_load(text)["topology"]
+    assert parsed["defaults"]["image"] == "ceos:4.30.7M"
+    assert parsed["nodes"] == {"leaf1": {"image": "ceos:4.32.1F"}, "leaf2": {}, "spine1": {}}
+    assert parsed["defaults"]["startup-config"] == "__clabNodeName__.cfg"
+    assert "# Images: --image auto, by EOS version from local ceos images; default is the " \
+           "fallback ceos:4.30.7M. Not a compatibility check." in text
+    out = capsys.readouterr().out
+    assert "image for leaf1 (EOS 4.32.1F): ceos:4.32.1F (exact match)" in out
+    assert "image for leaf2 (EOS 4.31.0F): ceos:4.30.7M (fallback: no local ceos image in the 4.31 train)" in out
+    assert "image for spine1 (EOS unknown): ceos:4.30.7M (fallback: EOS version unknown)" in out
+
+    # regenerate with --force while leaf1 fails: its node and override disappear
+    batch["results"]["SN1"] = {"config": "", "errors": ["unavailable"]}
+    batch["versions"]["SN2"] = "4.32.3F"
+    assert fetch_config.main(["--server", "cv.example:443", *AUTO_ARGS, "--force"]) == 1
+
+    parsed = yaml.safe_load((tmp_path / "configs" / "lab1.clab.yml").read_text())["topology"]
+    assert parsed["nodes"] == {"leaf2": {"image": "ceos:4.32.2F"}, "spine1": {}}
+    assert "(closest in the 4.32 train (version match only, not a compatibility check))" \
+        in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("tags, returncode, message", [
+    (["4.32.1F"], 0, "fallback image ceos:4.30.7M is not available locally"),
+    ([], 1, "'docker image ls' failed: permission denied"),
+])
+def test_image_auto_problems_stop_before_collection(batch, tmp_path, capsys, monkeypatch,
+                                                    tags, returncode, message):
+    fake_docker(monkeypatch, tags, returncode)
+
+    assert run(selector=AUTO_ARGS) == 1
+
+    assert batch["tag_filters"] == [] and batch["config_ids"] == []
+    assert list(tmp_path.iterdir()) == []
+    assert message in capsys.readouterr().err
+
+
+def test_explicit_image_never_runs_docker(batch, tmp_path, monkeypatch):
+    calls = fake_docker(monkeypatch, [])
+    batch["lldp"] = {"SN1": [port("Ethernet1")]}
+
+    assert run_topology() == 0
+
+    assert calls == []
+    parsed = yaml.safe_load((tmp_path / "configs" / "lab1.clab.yml").read_text())["topology"]
+    assert parsed["defaults"]["image"] == "ceos:4.35.7.2M"
+    assert set(map(str, parsed["nodes"].values())) == {"{}"}

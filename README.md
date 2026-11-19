@@ -131,6 +131,34 @@ Smaller steps of the same command, each leaving out more options:
 - **LLDP report only:** omit `--fixup-rules`, `--lab-name` and `--image`. The configs are collected and the links are printed; no topology is written.
 - **Collection only:** additionally omit `--lldp`. `--output-dir` only collects the configs.
 
+### Pick images by EOS version: `--image auto`
+
+Instead of one image for every node, `--image auto --fallback-image REPOSITORY:TAG` picks a local image per device from the EOS version that CloudVision inventory reports:
+
+```sh
+.venv/bin/ddn fetch --server www.arista.io --tag site=lab --output-dir lab1 --lldp \
+    --lab-name lab1 --image auto --fallback-image ceos:4.33.11.2M
+```
+
+```
+image for leaf1 (EOS 4.34.2F): ceos:4.33.11.2M (fallback: no local ceos image in the 4.34 train)
+image for leaf2 (EOS unknown): ceos:4.33.11.2M (fallback: EOS version unknown)
+image for spine1 (EOS 4.35.7.2M): ceos:4.35.7.2M (exact match)
+image for spine2 (EOS 4.35.7.2M): ceos:4.35.7.2M (exact match)
+```
+
+How it works:
+- **Local images only.** It runs `docker image ls REPOSITORY` once, before anything is fetched, and looks only at the tags of the fallback's repository (here `ceos`). It never pulls, builds or queries a registry. The fallback image must exist locally. If Docker is missing, not accessible (for example, you are not in the `docker` group), or the fallback is absent, the command stops with an error before contacting CloudVision.
+- **Matching, per device:**
+  1. a tag equal to the EOS version (exact match);
+  2. otherwise the closest tag in the same `MAJOR.MINOR` train: the smallest difference in the third number, then in the fourth. Ties go to the tag with the same letter suffix (`F`/`M`), then to the newer version;
+  3. otherwise (no image in that train, or an unknown or unusual version such as `4.32.1F-INT`) the fallback. It never picks an image from another train.
+- Tags that aren't versions (e.g. `latest`) are ignored as candidates and reported.
+- **In the topology,** the fallback is `defaults.image`. Only nodes that get a different image have `image:` set on the node. The header notes that images were picked automatically.
+- **This is version matching, not a compatibility check.** A matching image does not mean the config runs cleanly on it, and the `F`/`M` suffix is only used to break ties.
+
+Plain `--image IMAGE` is unchanged and never runs Docker.
+
 ### Regenerate a lab in place: `--force`
 
 By default nothing is ever overwritten, so the usual way to refresh a lab is a new output directory. That also keeps the previous generation. To regenerate into the same directory instead, add `--force` (only with `--tag … --output-dir`):
@@ -244,7 +272,7 @@ Rules are plain text editing:
 - **Live CVP/CVaaS compatibility is unverified** (#7). The CloudVision calls follow the `cloudvision` Python library's source and examples.
   - The code is tested against stubbed responses (`pytest`).
   - It was also tested in a human-run synthetic test drive (#22): Containerlab 0.83.0 with `ceos:4.35.7.2M`, four nodes, BGP and ECMP up, and the slash-form link `Ethernet49/1` ↔ `eth49_1` passing traffic.
-- **One image for all nodes.** `--image` applies to every node. The inventory EOS version is reported but not used to pick an image. You can override a node in the YAML by hand.
+- **Image choice is by version string only.** `--image IMAGE` applies to every node. `--image auto` matches local tags to inventory versions (see above) but knows nothing about platforms or compatibility. You can always override a node in the YAML by hand.
 - **LLDP matching is conservative.** A neighbour becomes a link only if:
   - its LLDP system name exactly matches the hostname of one selected device;
   - its port ID is an LLDP interface that device itself reports.

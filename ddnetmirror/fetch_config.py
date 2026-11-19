@@ -15,7 +15,7 @@ from cloudvision.api.arista.tag import v2 as tag
 from cloudvision.api.client import AsyncCVClient
 from cloudvision.compliance.client import ComplianceClient
 
-from ddnetmirror import lldp, topology
+from ddnetmirror import images, lldp, topology
 
 TOKEN_ENV = "CLOUDVISION_TOKEN"
 COLLECTED, STARTUP = "collected", "startup"  # subdirectories used with fixup rules
@@ -176,6 +176,14 @@ def parse_lab_name(text):
     return text
 
 
+def parse_image_ref(text):
+    try:
+        images.split_image(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+    return text
+
+
 def parse_server(server):
     host, sep, port = server.rpartition(":")
     if not sep:
@@ -188,6 +196,12 @@ def parse_server(server):
 def run(args):
     """Return True if every selected device was collected."""
     rules = load_fixup_rules(args.fixup_rules) if args.fixup_rules is not None else None
+    image = args.image
+    if args.fallback_image is not None:  # --image auto: check local images before collecting
+        try:
+            image = images.Selector(args.fallback_image)
+        except images.ImageError as exc:
+            raise FetchError(str(exc)) from None
     token = os.environ.get(TOKEN_ENV, "").strip()
     if not token:
         raise FetchError(f"{TOKEN_ENV} is not set")
@@ -206,7 +220,7 @@ def run(args):
     if args.output_dir:
         lab = None
         if args.lab_name:
-            lab = (args.lab_name, args.image)
+            lab = (args.lab_name, image)
             ensure_absent(topology_path(args.output_dir, args.lab_name), args.force)
         return collect_tag(
             conn, server, ca_bytes, args.tag, args.output_dir, args.lldp, lab, rules, args.verbose,
@@ -278,7 +292,8 @@ def collect_tag(
     Returns True only if every device was collected (and, with lab, the topology
     was written). With report_lldp, also prints LLDP links between the found
     devices (problems there are non-fatal). lab=(name, image) also writes a
-    Containerlab topology for the saved configs (requires report_lldp).
+    Containerlab topology for the saved configs (requires report_lldp); image is
+    an image name or an images.Selector (--image auto).
 
     With fixup rules, originals go to output_dir/collected and a transformed copy
     of each to output_dir/startup; the topology then lists only devices with a
@@ -418,8 +433,22 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
     if not complete:
         missing = "a saved config" if startup is None else "a startup config"
         header.append(f"INCOMPLETE: devices without {missing}, and their links, are missing.")
+    overrides = {}
+    if isinstance(image, images.Selector):
+        selector, image = image, image.fallback
+        header.append(f"Images: --image auto, by EOS version from local {selector.repository} "
+                      f"images; default is the fallback {image}. Not a compatibility check.")
+        if selector.ignored:
+            print(f"note: --image auto ignores local images without a version tag: "
+                  f"{', '.join(f'{selector.repository}:{t}' for t in selector.ignored)}")
+        for name in sorted(saved):
+            version = saved[name].software_version
+            chosen, reason = selector.choose(version)
+            print(f"image for {name} (EOS {version or 'unknown'}): {chosen} ({reason})")
+            if chosen != image:
+                overrides[name] = chosen
     config_dir = "" if startup is None else STARTUP  # relative to the topology file
-    text = topology.build(lab_name, image, saved, config_dir, endpoints, header)
+    text = topology.build(lab_name, image, saved, config_dir, endpoints, header, overrides)
     for reason in omitted:
         print(f"omitted link: {reason}", file=sys.stderr)
     path = topology_path(output_dir, lab_name)
@@ -458,7 +487,18 @@ def build_parser(prog=None):
         type=parse_lab_name,
         help="with --lldp: also write a Containerlab topology DIR/<NAME>.clab.yml",
     )
-    parser.add_argument("--image", help="cEOS image for every topology node (with --lab-name)")
+    parser.add_argument(
+        "--image",
+        help="cEOS image for every topology node (with --lab-name), or 'auto' to pick a local "
+        "image per device by EOS version (needs --fallback-image and Docker)",
+    )
+    parser.add_argument(
+        "--fallback-image",
+        type=parse_image_ref,
+        metavar="REPOSITORY:TAG",
+        help="with --image auto: local image for devices without an exact or same-train "
+        "(MAJOR.MINOR) match; its repository is the one searched; must exist locally",
+    )
     parser.add_argument(
         "--fixup-rules",
         metavar="RULES.yml",
@@ -491,6 +531,10 @@ def main(argv=None, prog=None):
         parser.error("--lab-name and --image must be given together")
     if args.lab_name and not args.lldp:
         parser.error("--lab-name requires --tag, --output-dir and --lldp")
+    if args.image == "auto" and args.fallback_image is None:
+        parser.error("--image auto requires --fallback-image REPOSITORY:TAG")
+    if args.fallback_image is not None and args.image != "auto":
+        parser.error("--fallback-image requires --image auto")
     if args.fixup_rules is not None and not args.lab_name:
         parser.error("--fixup-rules requires --lab-name, --image, --tag, --output-dir and --lldp")
     if args.verbose and args.fixup_rules is None:

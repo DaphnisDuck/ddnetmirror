@@ -57,7 +57,7 @@ def translate_links(nodes, links):
     return sorted(endpoints), omitted
 
 
-def build(lab_name, image, nodes, config_dir, endpoints, header):
+def build(lab_name, image, nodes, config_dir, endpoints, header, images=None):
     """Return the topology YAML text.
 
     nodes: node names; each inherits kind, image and startup-config from
@@ -65,7 +65,9 @@ def build(lab_name, image, nodes, config_dir, endpoints, header):
     name. config_dir: directory of the <node>.cfg files relative to the topology
     file ("" for the topology file's own directory).
     endpoints: from translate_links(). header: comment lines for the top.
+    images: {node: image} per-node overrides of the default image.
     """
+    images = images or {}
     q = json.dumps  # a JSON string is a valid YAML double-quoted scalar
     startup = f"{config_dir}/{NODE_NAME_VAR}.cfg" if config_dir else f"{NODE_NAME_VAR}.cfg"
     lines = [f"# {line}" for line in header]
@@ -78,7 +80,10 @@ def build(lab_name, image, nodes, config_dir, endpoints, header):
         f"    startup-config: {q(startup)}",
         "  nodes:",
     ]
-    lines += [f"    {q(name)}: {{}}" for name in sorted(nodes)]
+    lines += [
+        f"    {q(name)}: {{image: {q(images[name])}}}" if name in images else f"    {q(name)}: {{}}"
+        for name in sorted(nodes)
+    ]
     lines.append("  links:" if endpoints else "  links: []")
     for a, b, kind in endpoints:
         if kind == "one-sided":
