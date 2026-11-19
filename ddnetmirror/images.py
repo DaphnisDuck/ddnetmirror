@@ -34,6 +34,19 @@ def split_image(ref):
     return repository, tag
 
 
+DOCKER_HUB = ("docker.io/", "index.docker.io/", "registry-1.docker.io/")
+
+
+def short_repository(repository):
+    """Docker Hub names as `docker image ls` shows them: docker.io/library/ceos -> ceos,
+    docker.io/me/ceos -> me/ceos. Other registries (incl. host:port) stay as written."""
+    for prefix in DOCKER_HUB:
+        if repository.startswith(prefix):
+            repository = repository[len(prefix):]
+            break
+    return repository.removeprefix("library/") if repository.count("/") == 1 else repository
+
+
 def local_tags(repository):
     """Return the tags of local Docker images in repository (no pulls, no registry)."""
     command = ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}", repository]
@@ -64,7 +77,8 @@ class Selector:
 
     def __init__(self, fallback):
         self.fallback = fallback
-        self.repository, fallback_tag = split_image(fallback)
+        repository, fallback_tag = split_image(fallback)
+        self.repository = short_repository(repository)
         tags = local_tags(self.repository)
         if fallback_tag not in tags:
             raise ImageError(f"fallback image {fallback} is not available locally "
