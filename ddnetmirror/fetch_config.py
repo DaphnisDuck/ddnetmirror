@@ -372,8 +372,9 @@ def write_topology(
     return True
 
 
-def main(argv=None):
+def main(argv=None, prog=None):
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Fetch running configs from CloudVision and save them unchanged. "
         f"The service-account token is read from {TOKEN_ENV}."
     )

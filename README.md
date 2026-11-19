@@ -3,24 +3,26 @@ Query Arista CVP/CVaaS and generate Containerlab digital twins
 
 ## Fetch one device's running config
 
+`ddn fetch` and `ddn fixup` are also installed under their older names, `ddnetmirror-fetch-config` and `ddnetmirror-fixup`, with the same options and behavior.
+
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -e ".[test]"
 export CLOUDVISION_TOKEN=...   # CloudVision service-account token (env var only)
-.venv/bin/ddnetmirror-fetch-config --server www.arista.io --hostname leaf1
+.venv/bin/ddn fetch --server www.arista.io --hostname leaf1
 # or select the one device carrying a CloudVision device tag:
-.venv/bin/ddnetmirror-fetch-config --server www.arista.io --tag role=spine1
+.venv/bin/ddn fetch --server www.arista.io --tag role=spine1
 # or collect every device carrying a tag into a directory (one <hostname>.cfg each):
-.venv/bin/ddnetmirror-fetch-config --server www.arista.io --tag site=lab --output-dir configs
+.venv/bin/ddn fetch --server www.arista.io --tag site=lab --output-dir configs
 # ...and also print LLDP links between the collected devices:
-.venv/bin/ddnetmirror-fetch-config --server www.arista.io --tag site=lab --output-dir configs --lldp
+.venv/bin/ddn fetch --server www.arista.io --tag site=lab --output-dir configs --lldp
 # ...and also write a Containerlab topology configs/lab1.clab.yml for the saved configs:
-.venv/bin/ddnetmirror-fetch-config --server www.arista.io --tag site=lab --output-dir configs --lldp \
+.venv/bin/ddn fetch --server www.arista.io --tag site=lab --output-dir configs --lldp \
     --lab-name lab1 --image ceos:4.35.7.2M
 # ...with startup configs transformed by fixup rules (originals kept in configs/collected):
-.venv/bin/ddnetmirror-fetch-config --server www.arista.io --tag site=lab --output-dir configs --lldp \
+.venv/bin/ddn fetch --server www.arista.io --tag site=lab --output-dir configs --lldp \
     --lab-name lab1 --image ceos:4.35.7.2M --fixup-rules rules.yml
 # on-prem CVP with a private CA:
-.venv/bin/ddnetmirror-fetch-config --server cvp.example.net --hostname leaf1 --ca-file ca.pem
+.venv/bin/ddn fetch --server cvp.example.net --hostname leaf1 --ca-file ca.pem
 ```
 
 Looks the device up by hostname in the CloudVision inventory, or by a `tag.v2` device tag assignment (exactly one match required), retrieves its running config with `cloudvision.compliance.ComplianceClient.get_config`, and writes it unchanged to `<hostname>.cfg` (or `--output`). The output is encoded as UTF-8. An existing file is never overwritten, and nothing is written if the lookup or retrieval fails. With `--output-dir`, devices are collected one after another. Successful files are kept when other devices fail, each failure is reported, and the exit status is non-zero unless every device was collected. A device whose hostname is unsafe as a file name, is shared with another tagged device, or already has a file in the directory is skipped and reported, never renamed or overwritten.
@@ -35,7 +37,7 @@ Looks the device up by hostname in the CloudVision inventory, or by a `tag.v2` d
 
 ## Text fixups
 
-`ddnetmirror-fixup INPUT --rules RULES.yml --output OUTPUT` applies operator-defined text rules to a copy of a config. The input is never modified. The output is a new file (mode 0600) that is never overwritten, and nothing is written if a rule file or the input is bad. This is plain line-based text editing. ddnetmirror does not interpret EOS.
+`ddn fixup INPUT --rules RULES.yml --output OUTPUT` applies operator-defined text rules to a copy of a config. The input is never modified. The output is a new file (mode 0600) that is never overwritten, and nothing is written if a rule file or the input is bad. This is plain line-based text editing. ddnetmirror does not interpret EOS.
 
 The rule file is a YAML list. Rules run in order, and each sees the previous rule's output. Every rule has an `op`, a `match` (a literal substring, or a Python regex when `regex: true`) and, depending on the op:
 

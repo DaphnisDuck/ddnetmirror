@@ -170,8 +170,9 @@ def apply_rules(rules, text, report=print):
     return "".join(content + ending for content, ending in lines)
 
 
-def main(argv=None):
+def main(argv=None, prog=None):
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Apply text fixup rules to a copy of a config file. "
         "The input is never modified; the output is a new file."
     )
