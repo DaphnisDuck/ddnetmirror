@@ -5,7 +5,7 @@ ddn fetch \- fetch running configs, LLDP links and a Containerlab topology from 
 .B ddn
 fetch [-h] --server SERVER (--hostname HOSTNAME | --tag KEY=VALUE) [--ca-file CA_FILE] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fallback-image REPOSITORY:TAG] [--fixup-rules RULES.yml] [--verbose] [--force]
 .SH DESCRIPTION
-Fetch running configs from CloudVision and save them unchanged. The service\-account token is read from CLOUDVISION_TOKEN.
+Fetch running configs from CloudVision and save them unchanged. The service\-account token is read from CLOUDVISION_TOKEN, or else from $XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token).
 
 .SH OPTIONS
 .TP

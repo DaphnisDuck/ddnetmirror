@@ -24,8 +24,28 @@ Saved running configs are real device configs. They can contain hashed credentia
 ## Prerequisites
 
 - **Linux with Python ≥ 3.10.**
-- **A CloudVision service-account token**, passed only through the `CLOUDVISION_TOKEN` environment variable. It is never accepted as an argument and never logged.
+- **A CloudVision service-account token**, from the `CLOUDVISION_TOKEN` environment variable or an optional [token file](#token-file). It is never accepted as an argument and never logged.
 - **To run the lab:** [Containerlab](https://containerlab.dev) and a cEOS image that you obtain and import yourself (for example `ceos:4.35.7.2M`). ddnetmirror does not download images.
+
+### Token file
+
+Instead of exporting `CLOUDVISION_TOKEN` in every shell, you can put the token alone in `$XDG_CONFIG_HOME/ddnetmirror/token` (default `~/.config/ddnetmirror/token`). A final newline and surrounding whitespace are ignored. The token itself must be one line of printable ASCII; a token with inner spaces or control characters is refused (from the variable too).
+
+```sh
+install -d -m 700 ~/.config/ddnetmirror
+f=~/.config/ddnetmirror/token; touch "$f" && chmod 600 "$f" && cat > "$f"   # paste the token, then Ctrl-D
+```
+
+- **Precedence:** `CLOUDVISION_TOKEN` wins when it is set and not empty; the file is then not read. With neither, the command stops with an error naming both.
+- **Read-only:** ddnetmirror only reads the file. It never creates it or saves a token anywhere.
+- **Refused files.** ddnetmirror refuses the token file, without showing its content, if it is:
+  - a symlink or not a regular file;
+  - not owned by you;
+  - readable or writable by group or others;
+  - in a directory that group or others can write to.
+
+  Mode 0600 for the file and 0700 for the directory are recommended.
+- **No encryption.** File permissions are not encrypted storage: anyone with your account, or root, can read the token. Prefer a scoped, read-only, short-lived service-account token.
 
 ## Install
 

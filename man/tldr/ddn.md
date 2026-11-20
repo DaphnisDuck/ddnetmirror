@@ -1,7 +1,7 @@
 # ddn
 
 > Build Containerlab labs from Arista CloudVision data, keeping running configs unchanged.
-> The CloudVision token is read from the `CLOUDVISION_TOKEN` environment variable.
+> The CloudVision token is read from `CLOUDVISION_TOKEN`, or else from `~/.config/ddnetmirror/token`.
 > More information: <https://github.com/DaphnisDuck/ddnetmirror>.
 
 - Fetch one device's running config by inventory hostname (writes `leaf1.cfg`):
