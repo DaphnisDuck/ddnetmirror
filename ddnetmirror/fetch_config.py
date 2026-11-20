@@ -274,7 +274,12 @@ def parse_server(server):
 
 def run(args):
     """Return True if every selected device was collected."""
-    rules = load_fixup_rules(args.fixup_rules) if args.fixup_rules is not None else None
+    rules = None
+    if args.lab_name:  # fixups exist only for a generated lab
+        path, source = resolve_fixup_rules(args.fixup_rules)
+        print(f"fixup rules: {'none' if path is None else path} ({source})")
+        if path is not None:
+            rules = load_fixup_rules(path)
     image = args.image
     if args.lab_name and image is None:  # pick images by EOS version: list them before collecting
         try:
@@ -324,6 +329,43 @@ def run(args):
     return True
 
 
+NO_FIXUPS = "none"  # --fixup-rules none: no fixups, not even the user default
+
+
+def user_fixups_path():
+    """$XDG_CONFIG_HOME/ddnetmirror/fixups.yml, default ~/.config/ddnetmirror/fixups.yml."""
+    base = os.environ.get("XDG_CONFIG_HOME", "")
+    if not os.path.isabs(base):  # unset, empty or relative: the XDG default
+        base = os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "ddnetmirror", "fixups.yml")
+
+
+def resolve_fixup_rules(value, base_dir=None):
+    """Return (rule file path or None, where the choice came from).
+
+    value: the explicit setting (--fixup-rules), or None if not given. An
+    explicit path wins (relative to base_dir if given, e.g. a project
+    directory); "none" disables fixups; otherwise the user default file is used
+    if it exists, else no fixups. Only chooses; the file is validated by
+    load_fixup_rules. Never creates or changes any file.
+    """
+    if value == NO_FIXUPS:
+        return None, "disabled with --fixup-rules none"
+    if value is not None:
+        return (os.path.join(base_dir, value) if base_dir else value), "--fixup-rules"
+    path = user_fixups_path()
+    try:
+        os.lstat(path)
+    except FileNotFoundError:  # only a missing file means "no user default"
+        return None, f"no --fixup-rules and no {path}"
+    except OSError as exc:  # e.g. an unreadable directory: never silently skip the rules
+        raise FetchError(f"cannot check user default fixup rules {path}: {exc.strerror}") from None
+    if not os.path.isfile(path):
+        raise FetchError(f"{path} (user default fixup rules) is not a regular file; "
+                         "remove it or pass --fixup-rules")
+    return path, "user default"
+
+
 def load_fixup_rules(path):
     """Read and validate a fixup rule file before anything is fetched or written."""
     from ddnetmirror import fixup  # imported here: fixup imports this module
@@ -333,6 +375,8 @@ def load_fixup_rules(path):
             return fixup.load_rules(f.read().decode("utf-8"))
     except (fixup.RuleError, UnicodeDecodeError) as exc:
         raise FetchError(f"{path}: {exc}") from None
+    except OSError as exc:
+        raise FetchError(f"cannot read fixup rules {path}: {exc.strerror}") from None
 
 
 def write_startup(rules, name, config, output, verbose=False, force=False):
@@ -592,12 +636,14 @@ def build_parser(prog=None):
         "--fixup-rules",
         metavar="RULES.yml",
         help="with --lab-name: write copies of the collected configs transformed by these "
-        "rules to DIR/configs/startup, and use those as startup configs",
+        "rules to DIR/configs/startup, and use those as startup configs. Default: "
+        "$XDG_CONFIG_HOME/ddnetmirror/fixups.yml (~/.config/ddnetmirror/fixups.yml) if it "
+        "exists; 'none' disables fixups",
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="with --fixup-rules: print what each rule changed per device; "
+        help="with --lab-name and fixup rules: print what each rule changed per device; "
         "never prints config text",
     )
     parser.add_argument(
@@ -632,8 +678,9 @@ def main(argv=None, prog=None):
         parser.error("--lab-name requires --tag, --output-dir and --lldp")
     if args.fixup_rules is not None and not args.lab_name:
         parser.error("--fixup-rules requires --lab-name, --tag, --output-dir and --lldp")
-    if args.verbose and args.fixup_rules is None:
-        parser.error("--verbose requires --fixup-rules")
+    if args.verbose and (not args.lab_name or args.fixup_rules == NO_FIXUPS):
+        parser.error("--verbose requires fixup rules (--lab-name with --fixup-rules or "
+                     "the user default rules file)")
     if args.force and not args.output_dir:
         parser.error("--force requires --tag and --output-dir")
     try:
