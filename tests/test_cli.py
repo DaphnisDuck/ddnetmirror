@@ -1,9 +1,9 @@
 import pytest
 
-from ddnetmirror import cli, fetch_config, fixup
+from ddnetmirror import cli, fetch_config, fixup, up
 
 
-@pytest.mark.parametrize("command, module", [("fetch", fetch_config), ("fixup", fixup)])
+@pytest.mark.parametrize("command, module", [("fetch", fetch_config), ("fixup", fixup), ("up", up)])
 def test_ddn_dispatches_arguments_unchanged(monkeypatch, command, module):
     assert cli.COMMANDS[command][0] is module.main  # the alias entry point itself
     calls = []
@@ -27,7 +27,8 @@ def test_ddn_fixup_runs_the_same_logic_as_the_alias(tmp_path):
     assert cli.main(["fixup", *common, str(tmp_path / "ddn.cfg")]) == 1  # never overwrites
 
 
-@pytest.mark.parametrize("command, usage", [("fetch", "usage: ddn fetch"), ("fixup", "usage: ddn fixup")])
+@pytest.mark.parametrize("command, usage", [("fetch", "usage: ddn fetch"), ("fixup", "usage: ddn fixup"),
+                                            ("up", "usage: ddn up")])
 def test_subcommand_help_names_ddn(capsys, command, usage):
     with pytest.raises(SystemExit) as exc:
         cli.main([command, "--help"])

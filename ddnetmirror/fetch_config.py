@@ -272,11 +272,14 @@ def parse_server(server):
     return host, int(port)
 
 
-def run(args):
-    """Return True if every selected device was collected."""
+def run(args, base_dir=None):
+    """Return True if every selected device was collected.
+
+    base_dir: directory that a relative --fixup-rules path is relative to
+    (ddn up passes the project directory); None means the working directory."""
     rules = None
     if args.lab_name:  # fixups exist only for a generated lab
-        path, source = resolve_fixup_rules(args.fixup_rules)
+        path, source = resolve_fixup_rules(args.fixup_rules, base_dir)
         print(f"fixup rules: {'none' if path is None else path} ({source})")
         if path is not None:
             rules = load_fixup_rules(path)
@@ -655,7 +658,7 @@ def build_parser(prog=None):
     return parser
 
 
-def main(argv=None, prog=None):
+def main(argv=None, prog=None, base_dir=None):
     parser = build_parser(prog)
     args = parser.parse_args(argv)
     if args.output_dir and args.tag is None:
@@ -684,7 +687,7 @@ def main(argv=None, prog=None):
     if args.force and not args.output_dir:
         parser.error("--force requires --tag and --output-dir")
     try:
-        complete = run(args)
+        complete = run(args, base_dir)
     except (FetchError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

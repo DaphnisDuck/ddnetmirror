@@ -8,7 +8,8 @@ bin=$(dirname "$(command -v argparse-manpage)")
 version=$("$bin/python" -c 'import importlib.metadata as m; print(m.version("ddnetmirror"))')
 # page date: last commit touching the CLI modules, so regeneration is reproducible
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct -- \
-    ../ddnetmirror/cli.py ../ddnetmirror/fetch_config.py ../ddnetmirror/fixup.py)}"
+    ../ddnetmirror/cli.py ../ddnetmirror/fetch_config.py ../ddnetmirror/fixup.py \
+    ../ddnetmirror/up.py)}"
 
 page() {  # page-name parser-function description
     argparse-manpage --pyfile parsers.py --function "$2" --description "$3" \
@@ -22,3 +23,4 @@ page() {  # page-name parser-function description
 page ddn ddn "build Containerlab labs from Arista CloudVision data"
 page ddn-fetch ddn_fetch "fetch running configs, LLDP links and a Containerlab topology from CloudVision"
 page ddn-fixup ddn_fixup "apply text fixup rules to a copy of a config file"
+page ddn-up ddn_up "fetch, fix up, generate and deploy the lab described by ddnetmirror.yml"

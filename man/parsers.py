@@ -1,6 +1,6 @@
 """The real ddn parsers, for argparse-manpage (see man/README.md)."""
 
-from ddnetmirror import cli, fetch_config, fixup
+from ddnetmirror import cli, fetch_config, fixup, up
 
 
 def ddn():
@@ -13,3 +13,7 @@ def ddn_fetch():
 
 def ddn_fixup():
     return fixup.build_parser("ddn fixup")
+
+
+def ddn_up():
+    return up.build_parser("ddn up")
