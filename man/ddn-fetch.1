@@ -30,7 +30,8 @@ output file (default: <device hostname>.cfg); never overwritten
 
 .TP
 \fB\-\-output\-dir\fR \fI\,OUTPUT_DIR\/\fR
-with \-\-tag: collect every device with the tag into DIR as <hostname>.cfg
+with \-\-tag: collect every device with the tag into DIR/configs/collected as
+<hostname>.cfg
 
 .TP
 \fB\-\-lldp\fR
@@ -48,8 +49,8 @@ Docker; version matching only, not a compatibility check)
 
 .TP
 \fB\-\-fixup\-rules\fR \fI\,RULES.yml\/\fR
-with \-\-lab\-name: keep originals in DIR/collected, write copies transformed by
-these rules to DIR/startup, and use those as startup configs
+with \-\-lab\-name: write copies of the collected configs transformed by these
+rules to DIR/configs/startup, and use those as startup configs
 
 .TP
 \fB\-\-verbose\fR
