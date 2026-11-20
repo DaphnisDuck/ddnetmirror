@@ -178,7 +178,7 @@ def read_token():
     """
     token = os.environ.get(TOKEN_ENV, "").strip()
     if token:
-        return token
+        return checked_token(token, TOKEN_ENV)
     path = token_path()
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -210,6 +210,15 @@ def read_token():
         raise FetchError(f"token file {path} is not UTF-8 text") from None
     if not token:
         raise FetchError(f"token file {path} is empty")
+    return checked_token(token, f"token file {path}")
+
+
+def checked_token(token, source):
+    """Refuse inner whitespace, control or non-ASCII characters: gRPC metadata
+    validation would otherwise echo the token in its error message."""
+    if not all("!" <= c <= "~" for c in token):
+        raise FetchError(f"{source}: the token contains whitespace, control or non-ASCII "
+                         "characters (it must be a single line of printable ASCII)")
     return token
 
 

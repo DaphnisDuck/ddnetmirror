@@ -29,11 +29,11 @@ Saved running configs are real device configs. They can contain hashed credentia
 
 ### Token file
 
-Instead of exporting `CLOUDVISION_TOKEN` in every shell, you can put the token alone in `$XDG_CONFIG_HOME/ddnetmirror/token` (default `~/.config/ddnetmirror/token`). A final newline and surrounding whitespace are ignored.
+Instead of exporting `CLOUDVISION_TOKEN` in every shell, you can put the token alone in `$XDG_CONFIG_HOME/ddnetmirror/token` (default `~/.config/ddnetmirror/token`). A final newline and surrounding whitespace are ignored. The token itself must be one line of printable ASCII; a token with inner spaces or control characters is refused (from the variable too).
 
 ```sh
 install -d -m 700 ~/.config/ddnetmirror
-(umask 077; cat > ~/.config/ddnetmirror/token)   # paste the token, then Ctrl-D
+f=~/.config/ddnetmirror/token; touch "$f" && chmod 600 "$f" && cat > "$f"   # paste the token, then Ctrl-D
 ```
 
 - **Precedence:** `CLOUDVISION_TOKEN` wins when it is set and not empty; the file is then not read. With neither, the command stops with an error naming both.

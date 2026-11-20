@@ -99,3 +99,23 @@ def test_refusal_reaches_stderr_without_the_secret(home, capsys, monkeypatch, tm
     out = capsys.readouterr()
     assert "has mode 0644" in out.err
     assert SECRET not in out.out + out.err
+
+
+
+@pytest.mark.parametrize("source", ["file", "env"])
+@pytest.mark.parametrize("separator", ["\n", " ", "\x07", "\u00e9"])
+def test_token_with_inner_whitespace_or_control_characters_is_refused_silently(
+    home, capsys, monkeypatch, tmp_path, source, separator
+):
+    monkeypatch.chdir(tmp_path)
+    bad = f"Zq7Secret{separator}Kx9Secret"
+    if source == "file":
+        write_token(home, bad + "\n")
+    else:
+        monkeypatch.setenv("CLOUDVISION_TOKEN", bad)
+
+    assert fetch_config.main(["--server", "cv.example", "--hostname", "leaf1"]) == 1
+
+    out = capsys.readouterr()
+    assert "the token contains whitespace, control or non-ASCII characters" in out.err
+    assert "Secret" not in out.out + out.err
