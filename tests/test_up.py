@@ -93,6 +93,25 @@ def test_containerlab_that_cannot_be_started_is_a_clear_error(lab, monkeypatch, 
     assert f"remove a partial lab with: sudo {lab['exe']} destroy -t ./lab1.clab.yml" in err
 
 
+def test_containerlab_binary_missing_at_launch_uses_the_resolved_command(lab, monkeypatch, capsys):
+    real_run = up.subprocess.run
+
+    def run(command, **kwargs):
+        if command[0] == "sudo":  # the binary vanished after it was found
+            monkeypatch.setattr(up.shutil, "which", lambda name: None)
+            os.remove(lab["exe"])
+            raise FileNotFoundError(2, "No such file or directory", "sudo")
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(up.subprocess, "run", run)
+
+    assert up.main([]) == 1
+
+    err = capsys.readouterr().err
+    assert f"Check with: sudo {lab['exe']} inspect -t ./lab1.clab.yml" in err
+    assert f"remove a partial lab with: sudo {lab['exe']} destroy -t ./lab1.clab.yml" in err
+
+
 def test_containerlab_runs_without_sudo_as_root(lab, monkeypatch):
     monkeypatch.setattr(up.os, "geteuid", lambda: 0)
 

@@ -126,15 +126,18 @@ def main(argv=None, prog=None):
         project = load_project(directory)
         name = project["name"]
         topology = fetch_config.topology_path(directory, name)
-        deploy = containerlab_command("deploy", "-t", topology)
+        # resolved once: the messages below reuse it and never look up containerlab again
+        clab = containerlab_command()
         existing = lab_containers(name)
     except ProjectError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    deploy, inspect, destroy = (" ".join(clab + [action, "-t", topology])
+                                for action in ("deploy", "inspect", "destroy"))
     if existing:
         print(f"error: lab {name!r} already has containers ({', '.join(existing)}); not "
               f"regenerating or deploying. Remove it first if you mean to: "
-              f"{' '.join(containerlab_command('destroy', '-t', topology))}", file=sys.stderr)
+              f"{destroy}", file=sys.stderr)
         return 1
 
     try:
@@ -146,22 +149,19 @@ def main(argv=None, prog=None):
               "(see above)", file=sys.stderr)
         return code
 
-    print(f"deploying: {' '.join(deploy)}", flush=True)
+    print(f"deploying: {deploy}", flush=True)
     try:
-        code = subprocess.run(deploy).returncode  # output streams through unchanged
+        code = subprocess.run(clab + ["deploy", "-t", topology]).returncode  # output unchanged
     except KeyboardInterrupt:
         code = 130
     except OSError as exc:  # sudo or containerlab could not be started
-        print(f"error: could not run {deploy[0]}: {exc.strerror or exc}; nothing was deployed "
-              "or torn down. Check with: "
-              f"{' '.join(containerlab_command('inspect', '-t', topology))}; remove a partial lab "
-              f"with: {' '.join(containerlab_command('destroy', '-t', topology))}",
+        print(f"error: could not run {clab[0]}: {exc.strerror or exc}; nothing was deployed "
+              f"or torn down. Check with: {inspect}; remove a partial lab with: {destroy}",
               file=sys.stderr)
         return 1
     if code != 0:
         print(f"error: containerlab deploy failed (exit {code}); nothing was torn down. "
-              f"Inspect: {' '.join(containerlab_command('inspect', '-t', topology))}; "
-              f"remove: {' '.join(containerlab_command('destroy', '-t', topology))}",
+              f"Inspect: {inspect}; remove: {destroy}",
               file=sys.stderr)
     return code
 
