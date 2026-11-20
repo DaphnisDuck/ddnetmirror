@@ -783,6 +783,21 @@ def test_fixup_failure_keeps_original_and_drops_only_that_node(
     assert "boom" in err if failure == "rule error" else "already exists" in err
 
 
+def test_insert_before_anchor_in_fetch_workflow(batch, tmp_path, capsys):
+    batch["lldp"] = {"SN1": [nbr("Ethernet1", "spine1", "Ethernet49/1")], "SN3": [port("Ethernet49/1")]}
+    batch["results"]["SN2"]["config"] = "! SN2 café\r\nend\r\nend"  # anchor matches twice
+    rules = "- {op: insert-if-missing, match: '^maintenance$', regex: true, before: '^end$', text: maintenance}\n"
+
+    assert run_fixups(tmp_path, rules) == 1
+
+    startup = tmp_path / "configs" / "startup"
+    assert (startup / "leaf1.cfg").read_bytes() == "! SN1 café\r\nmaintenance\r\nend".encode()
+    assert not (startup / "leaf2.cfg").exists()
+    assert (tmp_path / "configs" / "collected" / "leaf2.cfg").exists()
+    assert ("failed: leaf2 (SN2): fixup failed, original kept: rule 1 insert-if-missing: "
+            "before '^end$' matches 2 lines") in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     "rules, message",
     [

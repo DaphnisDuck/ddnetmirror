@@ -135,6 +135,53 @@ def test_collapse_separators_sees_earlier_rules_output():
     assert apply(delete_then_collapse, text) == "hostname leaf1\n!\nend\n"
 
 
+ANCHORED = "router bgp 1\n   ! end of bgp\n!\nend\n"
+
+
+@pytest.mark.parametrize("rule", [
+    "{op: insert-if-missing, match: maintenance, before: end, text: \"maintenance\\n!\"}",
+    "{op: insert-if-missing, match: '^maintenance$', regex: true, before: '^end$', text: \"maintenance\\n!\"}",
+])
+def test_insert_before_anchor_keeps_anchor_and_rest(rule):
+    # literal before compares whole lines, so "   ! end of bgp" is not an anchor;
+    # a fragment without a final newline gets the anchor's line ending
+    assert apply(f"- {rule}", ANCHORED) == "router bgp 1\n   ! end of bgp\n!\nmaintenance\n!\nend\n"
+
+
+def test_insert_before_anchor_is_noop_when_match_present():
+    text = "maintenance\n!\nhostname leaf1\n"  # no anchor either: before is not looked at
+    rules = "- {op: insert-if-missing, match: maintenance, before: end, text: 'maintenance\\n'}"
+    assert apply(rules, text) == text
+
+
+def test_insert_before_anchor_runs_in_rule_order_and_keeps_crlf():
+    text = "hostname leaf1\r\n!\r\nend"  # CRLF, anchor without final newline
+    rules = """
+- {op: insert-if-missing, match: maintenance, before: end, text: "maintenance"}
+- {op: replace, match: '^maintenance$', with: 'maintenance mode', regex: true}
+- {op: insert-if-missing, match: banner, before: maintenance mode, text: "banner motd"}
+"""
+    # an unterminated fragment takes the anchor's ending, or the file's when the anchor has none
+    assert apply(rules, text) == "hostname leaf1\r\n!\r\nbanner motd\r\nmaintenance mode\r\nend"
+
+
+@pytest.mark.parametrize("before, found", [("nope", "no line"), ("!", "2 lines")])
+def test_missing_or_ambiguous_anchor_fails_without_output(tmp_path, capsys, before, found):
+    (tmp_path / "in.cfg").write_text("hostname leaf1\n!\nrouter bgp 1\n!\nend\n")
+    (tmp_path / "rules.yml").write_text(
+        f"- {{op: replace, match: leaf1, with: lab-leaf1}}\n"
+        f"- {{op: insert-if-missing, match: maintenance, before: '{before}', text: 'maintenance\\n'}}\n"
+    )
+    out = tmp_path / "out.cfg"
+
+    assert fixup.main([str(tmp_path / "in.cfg"), "--rules", str(tmp_path / "rules.yml"),
+                       "--output", str(out)]) == 1
+
+    assert not out.exists()
+    assert (f"rule 2 insert-if-missing: before {before!r} matches {found}, expected exactly one"
+            in capsys.readouterr().err)
+
+
 @pytest.mark.parametrize("template", ["\\2", "\\g<nope>", "\\g<1", "\\q"])
 def test_invalid_replacement_template_is_rejected_at_load(template):
     rules = f"- {{op: replace, match: 'host(name)', regex: true, with: '{template}'}}"
@@ -230,6 +277,9 @@ def test_cli_writes_new_owner_only_file_and_keeps_original(tmp_path):
         ("rules: [", "not valid YAML"),
         ("- {op: replace, match: 'x(y)', with: '\\2', regex: true}", "invalid replacement"),
         ("- {op: collapse-separators, match: '!'}", "unknown field match"),
+        ("- {op: insert-if-missing, match: x, text: y, before: '(', regex: true}", "invalid before regex"),
+        ("- {op: insert-if-missing, match: x, text: y, before: ''}", "before must be a non-empty string"),
+        ("- {op: delete-line, match: x, before: end}", "unknown field before"),
     ],
 )
 def test_bad_rule_file_fails_without_output(tmp_path, capsys, rules, message):
