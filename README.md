@@ -93,6 +93,7 @@ lab1/
 All files are created with mode 0600. Typical output:
 
 ```
+fixup rules: rules.yml (--fixup-rules)
 wrote running config for leaf1 (SN-LEAF1, EOS 4.34.2F) to lab1/configs/collected/leaf1.cfg
 wrote startup config for leaf1 with fixups to lab1/configs/startup/leaf1.cfg
 ...
@@ -148,7 +149,7 @@ sudo containerlab destroy -t lab1/lab1.clab.yml --cleanup
 ddnetmirror generates lab files. It does not deploy, start, stop or otherwise manage running labs. That is Containerlab's job, run by you with the commands above.
 
 Smaller steps of the same command, each leaving out more options:
-- **Topology without fixups:** omit `--fixup-rules`. No `configs/startup/` is written, and the topology boots the collected configs directly: `startup-config: "configs/collected/__clabNodeName__.cfg"`.
+- **Topology without fixups:** omit `--fixup-rules` (and have no [user default rules](#user-default-fixup-rules)), or pass `--fixup-rules none`. No `configs/startup/` is written, and the topology boots the collected configs directly: `startup-config: "configs/collected/__clabNodeName__.cfg"`.
 - **LLDP report only:** omit `--fixup-rules`, `--lab-name` and `--image`. The configs are collected and the links are printed; no topology is written.
 - **Collection only:** additionally omit `--lldp`. `--output-dir` only collects the configs into `configs/collected/`.
 
@@ -218,7 +219,7 @@ The device is looked up by inventory hostname, or by a device tag that matches e
 
 This prints one `rule N <op>: <count> line(s) affected` line per rule. It writes a new file and never touches the input. The result is identical to what `--fixup-rules` writes to `configs/startup/`.
 
-`--verbose` adds what each count means, for example `rule 3 delete-block: 3 line(s) affected (1 block(s) removed)`, `rule 9 collapse-separators: 4 line(s) affected (2 separator run(s) collapsed)` or, for a rule that found its match, `insert-if-missing: 0 line(s) affected (match present, nothing inserted)`. With `ddn fetch … --fixup-rules rules.yml --verbose` the same lines are printed for every device, prefixed `fixup <hostname>:`. Neither ever prints config text, matched lines or replacement text.
+`--verbose` adds what each count means, for example `rule 3 delete-block: 3 line(s) affected (1 block(s) removed)`, `rule 9 collapse-separators: 4 line(s) affected (2 separator run(s) collapsed)` or, for a rule that found its match, `insert-if-missing: 0 line(s) affected (match present, nothing inserted)`. With `ddn fetch … --lab-name lab1 --verbose` and fixup rules in use, the same lines are printed for every device, prefixed `fixup <hostname>:`. Neither ever prints config text, matched lines or replacement text.
 
 Check a rule file without touching any config:
 
@@ -229,6 +230,22 @@ Check a rule file without touching any config:
 `--check` runs the same validation as a real run (see below). It reads only the rule file, writes nothing and exits non-zero if the file is invalid.
 
 ## Fixup rules
+
+### User default fixup rules
+
+To avoid copying a rule file into every lab, put your own rules in `$XDG_CONFIG_HOME/ddnetmirror/fixups.yml` (default `~/.config/ddnetmirror/fixups.yml`). `ddn fetch … --lab-name` picks its rules like this:
+
+1. `--fixup-rules PATH` uses that file.
+2. `--fixup-rules none` (exactly, lowercase) applies no fixups, even if the user default exists.
+3. Without `--fixup-rules`, the user default file is used if it exists. Otherwise no fixups are applied, and the collected configs are used unchanged.
+
+The command prints which one it used, e.g. `fixup rules: /home/me/.config/ddnetmirror/fixups.yml (user default)` or `fixup rules: none (disabled with --fixup-rules none)`.
+
+- **Errors, not silent fallback.** If the user default exists but is a directory, unreadable or invalid, the command stops with an error before anything is fetched.
+- **Only `ddn fetch … --lab-name`.** Standalone `ddn fixup` and `ddn fixup --check` never look at it; pass the file explicitly (`ddn fixup --check ~/.config/ddnetmirror/fixups.yml`).
+- **Yours alone.** ddnetmirror never creates, installs, copies or updates this file.
+
+### Rule file format
 
 A rule file is a YAML list, and rules run in order, each on the previous rule's output. Every rule has an `op`, and all but `collapse-separators` have a `match`. `match` is a literal substring, or a Python regex when `regex: true`. Matching is per line, without the line ending.
 

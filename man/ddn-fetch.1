@@ -50,12 +50,14 @@ Docker; version matching only, not a compatibility check)
 .TP
 \fB\-\-fixup\-rules\fR \fI\,RULES.yml\/\fR
 with \-\-lab\-name: write copies of the collected configs transformed by these
-rules to DIR/configs/startup, and use those as startup configs
+rules to DIR/configs/startup, and use those as startup configs. Default:
+$XDG_CONFIG_HOME/ddnetmirror/fixups.yml (~/.config/ddnetmirror/fixups.yml) if
+it exists; 'none' disables fixups
 
 .TP
 \fB\-\-verbose\fR
-with \-\-fixup\-rules: print what each rule changed per device; never prints
-config text
+with \-\-lab\-name and fixup rules: print what each rule changed per device;
+never prints config text
 
 .TP
 \fB\-\-force\fR

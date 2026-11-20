@@ -840,9 +840,11 @@ def test_bad_fixup_rules_fail_before_collection(batch, tmp_path, capsys, rules, 
     assert message in capsys.readouterr().err
 
 
-def test_fixup_rules_require_topology_generation(cv, tmp_path):
+@pytest.mark.parametrize("extra", [("--fixup-rules", "rules.yml"), ("--fixup-rules", "none"),
+                                   ("--verbose",)])
+def test_fixup_rules_require_topology_generation(cv, tmp_path, extra):
     with pytest.raises(SystemExit) as exc:
-        run("--fixup-rules", "rules.yml", selector=("--tag", "site=lab", "--output-dir", "lab"))
+        run(*extra, selector=("--tag", "site=lab", "--output-dir", "lab"))
 
     assert exc.value.code == 2
     assert list(tmp_path.iterdir()) == []
@@ -863,6 +865,104 @@ def test_empty_fixup_rules_value_is_not_ignored(batch, tmp_path, capsys, with_to
 
     assert list(tmp_path.iterdir()) == []
     assert batch["tag_filters"] == [] and batch["config_ids"] == []
+
+
+TOPOLOGY_ARGS = ("--tag", "site=lab", "--output-dir", "lab", "--lldp", "--lab-name", "lab1",
+                 "--image", "ceos:4.35.7.2M")
+
+
+def user_fixups(tmp_path, text=FIXUP_RULES):
+    path = tmp_path / "xdg" / "ddnetmirror" / "fixups.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(text)
+    return path
+
+
+def test_user_default_fixup_rules_apply_without_fixup_rules(batch, tmp_path, capsys):
+    batch["lldp"] = {"SN1": [port("Ethernet1")]}
+    path = user_fixups(tmp_path)
+
+    assert run(selector=TOPOLOGY_ARGS) == 0
+
+    startup = tmp_path / "lab" / "configs" / "startup" / "leaf1.cfg"
+    assert startup.read_bytes() == "! lab-SN1 café\r\nend".encode()
+    assert path.read_text() == FIXUP_RULES  # only read
+    assert f"fixup rules: {path} (user default)\n" in capsys.readouterr().out
+
+
+def test_explicit_fixup_rules_win_over_the_user_default(batch, tmp_path, capsys):
+    batch["lldp"] = {"SN1": [port("Ethernet1")]}
+    user_fixups(tmp_path)
+    (tmp_path / "rules.yml").write_text("- {op: replace, match: '! SN', with: '! explicit-SN'}\n")
+
+    assert run("--fixup-rules", "rules.yml", selector=TOPOLOGY_ARGS) == 0
+
+    startup = tmp_path / "lab" / "configs" / "startup" / "leaf1.cfg"
+    assert startup.read_bytes() == "! explicit-SN1 café\r\nend".encode()
+    assert "fixup rules: rules.yml (--fixup-rules)\n" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("user_file, reason", [
+    (True, "disabled with --fixup-rules none"),
+    (False, "no --fixup-rules and no {xdg}/ddnetmirror/fixups.yml"),
+])
+def test_none_or_no_user_default_means_no_fixups(batch, tmp_path, capsys, user_file, reason):
+    batch["lldp"] = {"SN1": [port("Ethernet1")]}
+    extra = ("--fixup-rules", "none") if user_file else ()
+    if user_file:
+        user_fixups(tmp_path)
+
+    assert run(*extra, selector=TOPOLOGY_ARGS) == 0
+
+    assert not (tmp_path / "lab" / "configs" / "startup").exists()
+    text = (tmp_path / "lab" / "lab1.clab.yml").read_text()
+    assert 'startup-config: "configs/collected/__clabNodeName__.cfg"' in text
+    out = capsys.readouterr().out
+    assert f"fixup rules: none ({reason.format(xdg=tmp_path / 'xdg')})\n" in out
+
+
+def unreadable(path):
+    path.chmod(0)
+
+
+@pytest.mark.parametrize("break_it, message", [
+    (lambda p: (p.unlink(), p.mkdir()), "(user default fixup rules) is not a regular file"),
+    (lambda p: p.write_text("- {op: rename, match: x}\n"), "fixups.yml: rule 1: unknown op 'rename'"),
+    (unreadable, "cannot read fixup rules"),
+])
+def test_unusable_user_default_fixup_rules_fail_before_collection(batch, tmp_path, capsys,
+                                                                  break_it, message):
+    path = user_fixups(tmp_path)
+    break_it(path)
+    if break_it is unreadable and os.access(path, os.R_OK):
+        pytest.skip("running with permission to read any file (root)")
+
+    assert run(selector=TOPOLOGY_ARGS) == 1
+
+    assert message in capsys.readouterr().err
+    assert batch["tag_filters"] == [] and batch["config_ids"] == []
+    assert not (tmp_path / "lab").exists()
+
+
+def test_resolver_takes_a_base_directory_for_relative_paths(tmp_path):
+    assert fetch_config.resolve_fixup_rules("rules.yml", base_dir="proj") == (
+        os.path.join("proj", "rules.yml"), "--fixup-rules",
+    )
+    assert fetch_config.resolve_fixup_rules("/abs/rules.yml", base_dir="proj")[0] == "/abs/rules.yml"
+
+
+def test_standalone_fixup_never_reads_the_user_default(cv, tmp_path, capsys):
+    from ddnetmirror import fixup
+
+    user_fixups(tmp_path, "- {op: replace, match: leaf1, with: from-user-default}\n")
+    (tmp_path / "in.cfg").write_text("hostname leaf1\n")
+    (tmp_path / "rules.yml").write_text("- {op: delete-line, match: nothing}\n")
+
+    assert fixup.main(["in.cfg", "--rules", "rules.yml", "--output", "out.cfg"]) == 0
+    assert fixup.main(["--check", "rules.yml"]) == 0
+
+    assert (tmp_path / "out.cfg").read_text() == "hostname leaf1\n"
+    assert "rules.yml: 1 rule(s) OK" in capsys.readouterr().out
 
 
 LAB_ARGS = ("--tag", "site=lab", "--output-dir", "lab", "--lldp",
