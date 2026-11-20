@@ -944,6 +944,23 @@ def test_unusable_user_default_fixup_rules_fail_before_collection(batch, tmp_pat
     assert not (tmp_path / "lab").exists()
 
 
+def test_user_default_behind_an_unreadable_directory_is_an_error(batch, tmp_path, capsys):
+    user_fixups(tmp_path)
+    directory = tmp_path / "xdg" / "ddnetmirror"
+    directory.chmod(0)
+    try:
+        if os.access(directory, os.R_OK | os.X_OK):
+            pytest.skip("running with permission to read any directory (root)")
+        assert run(selector=TOPOLOGY_ARGS) == 1
+    finally:
+        directory.chmod(0o700)
+
+    assert (f"cannot check user default fixup rules {directory}/fixups.yml: Permission denied"
+            in capsys.readouterr().err)
+    assert batch["tag_filters"] == [] and batch["config_ids"] == []
+    assert not (tmp_path / "lab").exists()
+
+
 def test_resolver_takes_a_base_directory_for_relative_paths(tmp_path):
     assert fetch_config.resolve_fixup_rules("rules.yml", base_dir="proj") == (
         os.path.join("proj", "rules.yml"), "--fixup-rules",

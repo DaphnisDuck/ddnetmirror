@@ -354,8 +354,12 @@ def resolve_fixup_rules(value, base_dir=None):
     if value is not None:
         return (os.path.join(base_dir, value) if base_dir else value), "--fixup-rules"
     path = user_fixups_path()
-    if not os.path.lexists(path):
+    try:
+        os.lstat(path)
+    except FileNotFoundError:  # only a missing file means "no user default"
         return None, f"no --fixup-rules and no {path}"
+    except OSError as exc:  # e.g. an unreadable directory: never silently skip the rules
+        raise FetchError(f"cannot check user default fixup rules {path}: {exc.strerror}") from None
     if not os.path.isfile(path):
         raise FetchError(f"{path} (user default fixup rules) is not a regular file; "
                          "remove it or pass --fixup-rules")
