@@ -817,10 +817,10 @@ def test_insert_before_anchor_in_fetch_workflow(batch, tmp_path, capsys):
 
     assert run_fixups(tmp_path, rules) == 1
 
-    startup = tmp_path / "configs" / "startup"
-    assert (startup / "leaf1.cfg").read_bytes() == "! SN1 café\r\nmaintenance\r\nend".encode()
-    assert not (startup / "leaf2.cfg").exists()
-    assert (tmp_path / "configs" / "collected" / "leaf2.cfg").exists()
+    configs = tmp_path / "lab" / "configs"
+    assert (configs / "startup" / "leaf1.cfg").read_bytes() == "! SN1 café\r\nmaintenance\r\nend".encode()
+    assert not (configs / "startup" / "leaf2.cfg").exists()
+    assert (configs / "collected" / "leaf2.cfg").exists()
     assert ("failed: leaf2 (SN2): fixup failed, original kept: rule 1 insert-if-missing: "
             "before '^end$' matches 2 lines") in capsys.readouterr().err
 
