@@ -36,6 +36,10 @@
 
 `ddn fixup --check {{rules.yml}}`
 
+- Build and deploy the lab described by `ddnetmirror.yml` in the current directory (refuses if the lab exists):
+
+`ddn up`
+
 - Show the options of a subcommand:
 
-`ddn {{fetch|fixup}} --help`
+`ddn {{fetch|fixup|up}} --help`

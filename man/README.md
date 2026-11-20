@@ -1,6 +1,6 @@
 # Man pages and examples
 
-- `ddn.1`, `ddn-fetch.1`, `ddn-fixup.1`: generated from the real argparse parsers. Read them with `man -l man/ddn-fetch.1`. `pip install` does not install them.
+- `ddn.1`, `ddn-fetch.1`, `ddn-fixup.1`, `ddn-up.1`: generated from the real argparse parsers. Read them with `man -l man/ddn-fetch.1`. `pip install` does not install them.
 - `tldr/ddn.md`: common examples in [tldr](https://tldr.sh) page format.
 
 Fixup rule syntax and the full workflow are documented in the top-level README.
