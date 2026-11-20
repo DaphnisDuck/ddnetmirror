@@ -231,6 +231,8 @@ cd ~/labs/fabric && ddn up
 
    If the deploy fails or is interrupted, nothing is torn down; the message shows the `containerlab inspect` and `containerlab destroy` commands.
 
+Running `ddn up` concurrently against the same project directory is unsupported: there is no lock, and overlapping runs can mix generated files. Run one at a time.
+
 There is no `ddn down`. Remove a lab with `sudo containerlab destroy -t ./NAME.clab.yml --cleanup`, then `ddn up` can deploy it again.
 
 ## Fetch a single device
