@@ -183,7 +183,7 @@ By default nothing is ever overwritten, so the usual way to refresh a lab is a n
 .venv/bin/ddn fetch --server www.arista.io --tag role=core1 --output core1.cfg  # tag must match exactly one device
 ```
 
-The device is looked up by inventory hostname, or by a device tag that matches exactly one device. Its running config is written unchanged, and its EOS version is reported (`unknown` if inventory has none).
+The device is looked up by inventory hostname, or by a device tag that matches exactly one device. The hostname match ignores case (`leaf1` finds `LEAF1`); files and output use the hostname as CloudVision reports it, and hostnames that differ only in case are refused as ambiguous. Tag keys and values must match exactly, including case. Its running config is written unchanged, and its EOS version is reported (`unknown` if inventory has none).
 
 ## Fix up a config by hand
 

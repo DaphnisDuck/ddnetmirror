@@ -43,7 +43,8 @@ def cv(monkeypatch, tmp_path):
 
         async def get_all(self, request, timeout=None):
             state["filters"].extend(request.partial_eq_filter)
-            wanted = request.partial_eq_filter[0].key.device_id
+            filters = request.partial_eq_filter
+            wanted = filters[0].key.device_id if filters else None  # no filter: whole inventory
             for serial in state["serials"]:
                 if wanted is not None and wanted != serial:
                     continue
@@ -121,7 +122,7 @@ def test_writes_config_verbatim(cv, tmp_path):
     assert run() == 0
 
     assert (tmp_path / "leaf1.cfg").read_bytes() == config.encode("utf-8")
-    assert cv["filters"][0].hostname == "leaf1"
+    assert cv["filters"] == []  # hostnames are compared locally, ignoring case
     assert cv["compliance_calls"] == [("cv.example:443", TOKEN, None)]
 
 
@@ -148,6 +149,32 @@ def test_no_or_multiple_matches_write_nothing(cv, tmp_path, capsys, serials):
 
     assert list(tmp_path.iterdir()) == []
     assert "leaf1" in capsys.readouterr().err
+    assert cv["compliance_calls"] == []
+
+
+def test_hostname_matches_any_case_and_keeps_cloudvision_casing(cv, tmp_path, capsys):
+    cv["serials"] = ["SN1", "SN2"]
+    cv["hostnames"] = {"SN1": "Spine1", "SN2": "LEAF1"}
+    cv["result"]["config"] = "hostname LEAF1\n"
+
+    assert run(selector=("--hostname", "leaf1")) == 0
+
+    assert [p.name for p in tmp_path.iterdir()] == ["LEAF1.cfg"]
+    assert (tmp_path / "LEAF1.cfg").read_text() == "hostname LEAF1\n"
+    assert cv["config_ids"] == ["SN2"]
+    assert "running config for LEAF1 (SN2" in capsys.readouterr().out
+
+
+def test_hostnames_differing_only_in_case_are_ambiguous(cv, tmp_path, capsys):
+    cv["serials"] = ["SN1", "SN2"]
+    cv["hostnames"] = {"SN1": "leaf1", "SN2": "LEAF1"}
+
+    assert run(selector=("--hostname", "Leaf1")) == 1
+
+    assert list(tmp_path.iterdir()) == []
+    assert "2 devices with hostname 'Leaf1' ignoring case: leaf1 (SN1), LEAF1 (SN2)" in (
+        capsys.readouterr().err
+    )
     assert cv["compliance_calls"] == []
 
 
