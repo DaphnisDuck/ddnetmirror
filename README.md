@@ -84,19 +84,20 @@ What this command does:
 
 ```
 lab1/
-├── collected/   leaf1.cfg  leaf2.cfg  spine1.cfg  spine2.cfg   # exactly as CloudVision returned them
-├── startup/     leaf1.cfg  leaf2.cfg  spine1.cfg  spine2.cfg   # copies with rules.yml applied
+├── configs/
+│   ├── collected/   leaf1.cfg  leaf2.cfg  spine1.cfg  spine2.cfg   # exactly as CloudVision returned them
+│   └── startup/     leaf1.cfg  leaf2.cfg  spine1.cfg  spine2.cfg   # copies with rules.yml applied
 └── lab1.clab.yml
 ```
 
 All files are created with mode 0600. Typical output:
 
 ```
-wrote running config for leaf1 (SN-LEAF1, EOS 4.34.2F) to lab1/collected/leaf1.cfg
-wrote startup config for leaf1 with fixups to lab1/startup/leaf1.cfg
+wrote running config for leaf1 (SN-LEAF1, EOS 4.34.2F) to lab1/configs/collected/leaf1.cfg
+wrote startup config for leaf1 with fixups to lab1/configs/startup/leaf1.cfg
 ...
-collected 4 of 4 devices with tag site=lab into lab1/collected; 0 failed
-wrote 4 of 4 startup configs with fixups into lab1/startup; 0 failed
+collected 4 of 4 devices with tag site=lab into lab1/configs/collected; 0 failed
+wrote 4 of 4 startup configs with fixups into lab1/configs/startup; 0 failed
 LLDP links between selected devices: 5
 leaf1 Ethernet1 <-> spine1 Ethernet1 [reciprocal]
 leaf1 Ethernet49/1 <-> leaf2 Ethernet49/1 [reciprocal]
@@ -115,7 +116,7 @@ topology:
   defaults:  # every node inherits these; override per node, e.g. "leaf1": {image: "..."}
     kind: ceos
     image: "ceos:4.35.7.2M"
-    startup-config: "startup/__clabNodeName__.cfg"
+    startup-config: "configs/startup/__clabNodeName__.cfg"
   nodes:
     "leaf1": {}
     "leaf2": {}
@@ -132,7 +133,7 @@ topology:
 
 How the topology is built:
 - **Node names** are the inventory hostnames, used as-is.
-- **Startup configs:** Containerlab replaces `__clabNodeName__` with the node name and resolves the path relative to the topology file. Each node therefore boots from `startup/<hostname>.cfg`.
+- **Startup configs:** Containerlab replaces `__clabNodeName__` with the node name and resolves the path relative to the topology file. Each node therefore boots from `configs/startup/<hostname>.cfg`.
 - **Interface names** are converted mechanically: `Ethernet1` → `eth1`, `Ethernet49/1` → `eth49_1`.
 - **The timestamp** is the time the file was written, not when CloudVision observed the devices.
 
@@ -147,9 +148,9 @@ sudo containerlab destroy -t lab1/lab1.clab.yml --cleanup
 ddnetmirror generates lab files. It does not deploy, start, stop or otherwise manage running labs. That is Containerlab's job, run by you with the commands above.
 
 Smaller steps of the same command, each leaving out more options:
-- **Topology without fixups:** omit `--fixup-rules`. The configs go directly in `lab1/<hostname>.cfg`, and the topology uses `startup-config: "__clabNodeName__.cfg"`.
+- **Topology without fixups:** omit `--fixup-rules`. No `configs/startup/` is written, and the topology boots the collected configs directly: `startup-config: "configs/collected/__clabNodeName__.cfg"`.
 - **LLDP report only:** omit `--fixup-rules`, `--lab-name` and `--image`. The configs are collected and the links are printed; no topology is written.
-- **Collection only:** additionally omit `--lldp`. `--output-dir` only collects the configs.
+- **Collection only:** additionally omit `--lldp`. `--output-dir` only collects the configs into `configs/collected/`.
 
 ### Images: picked by EOS version unless you pass `--image`
 
@@ -192,11 +193,11 @@ By default nothing is ever overwritten, so the usual way to refresh a lab is a n
     --lab-name lab1 --image ceos:4.35.7.2M --fixup-rules rules.yml --force
 ```
 
-- It replaces only the files this command generates: `collected/<hostname>.cfg` (or `<hostname>.cfg` without fixups), `startup/<hostname>.cfg` and `lab1.clab.yml`. **This includes files you edited by hand at those paths.**
+- It replaces only the files this command generates: `configs/collected/<hostname>.cfg`, `configs/startup/<hostname>.cfg` (with fixups) and `lab1.clab.yml`. Missing `configs/` subdirectories are created. **This includes files you edited by hand at those paths.**
 - It makes **no backups**. To keep the previous lab, use a new output directory instead.
 - Each file is written to a temporary file in the same directory and then renamed over the old one, so a failed write leaves the previous complete file in place.
-- Unrelated files are never touched. Files of devices that are no longer selected (stale) are left as they are, but they are not in the new topology. The topology lists only devices that succeeded in this run.
-- A device that fails in this run is reported as failed and left out of the topology, which is marked `INCOMPLETE` as usual. A file whose write fails keeps its previous version. Files of that device that were already replaced earlier in the run are not restored; there is no rollback. For example, if a device's fixup or startup write fails, its `collected/<hostname>.cfg` is already the new config, while `startup/<hostname>.cfg` stays the old one.
+- Unrelated files are never touched, including other files and subdirectories under `configs/`. Files of devices that are no longer selected (stale) are left as they are, but they are not in the new topology. The topology lists only devices that succeeded in this run.
+- A device that fails in this run is reported as failed and left out of the topology, which is marked `INCOMPLETE` as usual. A file whose write fails keeps its previous version. Files of that device that were already replaced earlier in the run are not restored; there is no rollback. For example, if a device's fixup or startup write fails, its `configs/collected/<hostname>.cfg` is already the new config, while `configs/startup/<hostname>.cfg` stays the old one.
 - A symbolic link, directory or other non-regular file at one of these paths is never followed or replaced. It is reported, and you remove it or use a new directory.
 - `--force` only writes files. It never touches a running lab: destroy and redeploy it yourself with Containerlab.
 
@@ -212,10 +213,10 @@ The device is looked up by inventory hostname, or by a device tag that matches e
 ## Fix up a config by hand
 
 ```sh
-.venv/bin/ddn fixup lab1/collected/leaf1.cfg --rules rules.yml --output leaf1-lab.cfg
+.venv/bin/ddn fixup lab1/configs/collected/leaf1.cfg --rules rules.yml --output leaf1-lab.cfg
 ```
 
-This prints one `rule N <op>: <count> line(s) affected` line per rule. It writes a new file and never touches the input. The result is identical to what `--fixup-rules` writes to `startup/`.
+This prints one `rule N <op>: <count> line(s) affected` line per rule. It writes a new file and never touches the input. The result is identical to what `--fixup-rules` writes to `configs/startup/`.
 
 `--verbose` adds what each count means, for example `rule 3 delete-block: 3 line(s) affected (1 block(s) removed)`, `rule 9 collapse-separators: 4 line(s) affected (2 separator run(s) collapsed)` or, for a rule that found its match, `insert-if-missing: 0 line(s) affected (match present, nothing inserted)`. With `ddn fetch … --fixup-rules rules.yml --verbose` the same lines are printed for every device, prefixed `fixup <hostname>:`. Neither ever prints config text, matched lines or replacement text.
 

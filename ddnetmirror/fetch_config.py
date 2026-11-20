@@ -18,7 +18,8 @@ from cloudvision.compliance.client import ComplianceClient
 from ddnetmirror import images, lldp, topology
 
 TOKEN_ENV = "CLOUDVISION_TOKEN"
-COLLECTED, STARTUP = "collected", "startup"  # subdirectories used with fixup rules
+# under --output-dir: collected configs always, fixed-up startup configs with fixup rules
+COLLECTED, STARTUP = "configs/collected", "configs/startup"
 RPC_TIMEOUT = 30
 
 
@@ -370,21 +371,22 @@ def collect_tag(
     Containerlab topology for the saved configs (requires report_lldp); image is
     an image name (--image) or an images.Selector (the default).
 
-    With fixup rules, originals go to output_dir/collected and a transformed copy
-    of each to output_dir/startup; the topology then lists only devices with a
-    startup config. A device whose fixup fails keeps its original and counts as
+    Originals always go to output_dir/configs/collected. With fixup rules, a
+    transformed copy of each goes to output_dir/configs/startup; the topology
+    then lists only devices with a startup config. A device whose fixup fails keeps its original and counts as
     failed. verbose prints per-device, per-rule fixup counts.
 
     force replaces existing regular files at the generated paths (one at a time,
     via a temporary file). A file whose write fails keeps its previous version,
     and a failed device never counts as this run's output. Files of that device
-    replaced before the failure (e.g. collected/<name>.cfg when its fixup fails)
+    replaced before the failure (e.g. configs/collected/<name>.cfg when its fixup
+    fails)
     are not restored: there is no rollback. Other files are never looked at.
     """
     label, value = selected_tag
     token = conn[2]
     device_ids = find_tagged_device_ids(*conn, label, value)
-    collected_dir = os.path.join(output_dir, COLLECTED) if rules else output_dir
+    collected_dir = os.path.join(output_dir, COLLECTED)
     os.makedirs(collected_dir, exist_ok=True)
     if rules:
         os.makedirs(os.path.join(output_dir, STARTUP), exist_ok=True)
@@ -467,7 +469,8 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
     """Write <lab>.clab.yml for the saved configs; return True if written.
 
     startup: names with a fixed-up startup config (None without fixups); only
-    those become nodes, referencing startup/<name>.cfg.
+    those become nodes, referencing configs/startup/<name>.cfg; otherwise nodes
+    reference configs/collected/<name>.cfg.
     """
     lab_name, image = lab
     if startup is not None:
@@ -513,7 +516,7 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
         image, overrides = choose_images(image, saved)
         header.append(f"Images: picked per device by EOS version from local {images.REPOSITORY} "
                       f"images; default is the most used, {image}. Not a compatibility check.")
-    config_dir = "" if startup is None else STARTUP  # relative to the topology file
+    config_dir = COLLECTED if startup is None else STARTUP  # relative to the topology file
     text = topology.build(lab_name, image, saved, config_dir, endpoints, header, overrides)
     for reason in omitted:
         print(f"omitted link: {reason}", file=sys.stderr)
@@ -565,7 +568,8 @@ def build_parser(prog=None):
     outputs.add_argument("--output", help="output file (default: <device hostname>.cfg); never overwritten")
     outputs.add_argument(
         "--output-dir",
-        help="with --tag: collect every device with the tag into DIR as <hostname>.cfg",
+        help="with --tag: collect every device with the tag into DIR/configs/collected "
+        "as <hostname>.cfg",
     )
     parser.add_argument(
         "--lldp",
@@ -587,8 +591,8 @@ def build_parser(prog=None):
     parser.add_argument(
         "--fixup-rules",
         metavar="RULES.yml",
-        help="with --lab-name: keep originals in DIR/collected, write copies transformed "
-        "by these rules to DIR/startup, and use those as startup configs",
+        help="with --lab-name: write copies of the collected configs transformed by these "
+        "rules to DIR/configs/startup, and use those as startup configs",
     )
     parser.add_argument(
         "--verbose",
