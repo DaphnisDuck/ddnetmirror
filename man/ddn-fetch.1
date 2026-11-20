@@ -3,7 +3,7 @@
 ddn fetch \- fetch running configs, LLDP links and a Containerlab topology from CloudVision
 .SH SYNOPSIS
 .B ddn
-fetch [-h] --server SERVER (--hostname HOSTNAME | --tag KEY=VALUE) [--ca-file CA_FILE] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fallback-image REPOSITORY:TAG] [--fixup-rules RULES.yml] [--verbose] [--force]
+fetch [-h] --server SERVER (--hostname HOSTNAME | --tag KEY=VALUE) [--ca-file CA_FILE] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml] [--verbose] [--force]
 .SH DESCRIPTION
 Fetch running configs from CloudVision and save them unchanged. The service\-account token is read from CLOUDVISION_TOKEN, or else from $XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token).
 
@@ -42,13 +42,9 @@ with \-\-lldp: also write a Containerlab topology DIR/<NAME>.clab.yml
 
 .TP
 \fB\-\-image\fR \fI\,IMAGE\/\fR
-cEOS image for every topology node (with \-\-lab\-name), or 'auto' to pick a
-local image per device by EOS version (needs \-\-fallback\-image and Docker)
-
-.TP
-\fB\-\-fallback\-image\fR \fI\,REPOSITORY:TAG\/\fR
-with \-\-image auto: local image for devices without an exact or same\-train
-(MAJOR.MINOR) match; its repository is the one searched; must exist locally
+with \-\-lab\-name: cEOS image for every topology node, no Docker check. Without
+it, a local ceos:VERSION image is picked per device by EOS version (needs
+Docker; version matching only, not a compatibility check)
 
 .TP
 \fB\-\-fixup\-rules\fR \fI\,RULES.yml\/\fR

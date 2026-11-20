@@ -16,9 +16,9 @@
 
 `ddn fetch --server {{www.arista.io}} --tag {{site=lab}} --output-dir {{lab1}} --lldp --lab-name {{lab1}} --image {{ceos:4.35.7.2M}} --fixup-rules {{rules.yml}}`
 
-- Pick a local cEOS image per device by EOS version, falling back to a given local image:
+- Write a topology, picking a local `ceos` image per device by EOS version (the default without `--image`):
 
-`ddn fetch --server {{www.arista.io}} --tag {{site=lab}} --output-dir {{lab1}} --lldp --lab-name {{lab1}} --image auto --fallback-image {{ceos:4.33.11.2M}}`
+`ddn fetch --server {{www.arista.io}} --tag {{site=lab}} --output-dir {{lab1}} --lldp --lab-name {{lab1}}`
 
 - Regenerate that lab in the same directory, replacing its generated files (no backups):
 

@@ -262,14 +262,6 @@ def parse_lab_name(text):
     return text
 
 
-def parse_image_ref(text):
-    try:
-        images.split_image(text)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from None
-    return text
-
-
 def parse_server(server):
     host, sep, port = server.rpartition(":")
     if not sep:
@@ -283,9 +275,9 @@ def run(args):
     """Return True if every selected device was collected."""
     rules = load_fixup_rules(args.fixup_rules) if args.fixup_rules is not None else None
     image = args.image
-    if args.fallback_image is not None:  # --image auto: check local images before collecting
+    if args.lab_name and image is None:  # pick images by EOS version: list them before collecting
         try:
-            image = images.Selector(args.fallback_image)
+            image = images.Selector()
         except images.ImageError as exc:
             raise FetchError(str(exc)) from None
     token = read_token()
@@ -376,7 +368,7 @@ def collect_tag(
     was written). With report_lldp, also prints LLDP links between the found
     devices (problems there are non-fatal). lab=(name, image) also writes a
     Containerlab topology for the saved configs (requires report_lldp); image is
-    an image name or an images.Selector (--image auto).
+    an image name (--image) or an images.Selector (the default).
 
     With fixup rules, originals go to output_dir/collected and a transformed copy
     of each to output_dir/startup; the topology then lists only devices with a
@@ -518,18 +510,9 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
         header.append(f"INCOMPLETE: devices without {missing}, and their links, are missing.")
     overrides = {}
     if isinstance(image, images.Selector):
-        selector, image = image, image.fallback
-        header.append(f"Images: --image auto, by EOS version from local {selector.repository} "
-                      f"images; default is the fallback {image}. Not a compatibility check.")
-        if selector.ignored:
-            print(f"note: --image auto ignores local images without a version tag: "
-                  f"{', '.join(f'{selector.repository}:{t}' for t in selector.ignored)}")
-        for name in sorted(saved):
-            version = saved[name].software_version
-            chosen, reason = selector.choose(version)
-            print(f"image for {name} (EOS {version or 'unknown'}): {chosen} ({reason})")
-            if chosen != image:
-                overrides[name] = chosen
+        image, overrides = choose_images(image, saved)
+        header.append(f"Images: picked per device by EOS version from local {images.REPOSITORY} "
+                      f"images; default is the most used, {image}. Not a compatibility check.")
     config_dir = "" if startup is None else STARTUP  # relative to the topology file
     text = topology.build(lab_name, image, saved, config_dir, endpoints, header, overrides)
     for reason in omitted:
@@ -541,6 +524,27 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
         print(f"warning: {path} is INCOMPLETE: only {len(saved)} of {total} devices",
               file=sys.stderr)
     return True
+
+
+def choose_images(selector, saved):
+    """Pick and explain an image per node; return (default image, {node: other image}).
+
+    The default is the image most nodes got (ties: the first in name order)."""
+    if selector.ignored:
+        print("note: ignoring local images without a version tag: "
+              + ", ".join(selector.image(t) for t in selector.ignored))
+    chosen = {}
+    for name in sorted(saved):
+        version = saved[name].software_version
+        chosen[name], reason, cross_train = selector.choose(version)
+        print(f"image for {name} (EOS {version or 'unknown'}): {chosen[name]} ({reason})")
+        if cross_train:
+            print(f"warning: {name} gets {chosen[name]} from another release train than its "
+                  f"EOS {version}; version matching does not establish configuration "
+                  "compatibility", file=sys.stderr)
+    picks = list(chosen.values())
+    default = max(picks, key=picks.count)  # first maximum: deterministic
+    return default, {n: i for n, i in chosen.items() if i != default}
 
 
 def build_parser(prog=None):
@@ -575,16 +579,11 @@ def build_parser(prog=None):
     )
     parser.add_argument(
         "--image",
-        help="cEOS image for every topology node (with --lab-name), or 'auto' to pick a local "
-        "image per device by EOS version (needs --fallback-image and Docker)",
+        help="with --lab-name: cEOS image for every topology node, no Docker check. Without it, "
+        "a local ceos:VERSION image is picked per device by EOS version (needs Docker; "
+        "version matching only, not a compatibility check)",
     )
-    parser.add_argument(
-        "--fallback-image",
-        type=parse_image_ref,
-        metavar="REPOSITORY:TAG",
-        help="with --image auto: local image for devices without an exact or same-train "
-        "(MAJOR.MINOR) match; its repository is the one searched; must exist locally",
-    )
+    parser.add_argument("--fallback-image", help=argparse.SUPPRESS)  # removed; refused in main
     parser.add_argument(
         "--fixup-rules",
         metavar="RULES.yml",
@@ -613,16 +612,22 @@ def main(argv=None, prog=None):
         parser.error("--output-dir requires --tag")
     if args.lldp and not args.output_dir:
         parser.error("--lldp requires --tag and --output-dir")
-    if bool(args.lab_name) != bool(args.image):
-        parser.error("--lab-name and --image must be given together")
+    if args.fallback_image is not None:
+        parser.error("--fallback-image was removed: without --image, a local ceos image is "
+                     "picked per device (the newest one when no version matches); "
+                     "pass --image IMAGE to use one image for every node")
+    if args.image is not None and not args.image.strip():
+        parser.error("--image must not be empty (omit it to pick images by EOS version)")
+    if args.image is not None and not args.lab_name:
+        parser.error("--image requires --lab-name")
+    if args.image == "auto":
+        print("note: --image auto is no longer needed; picking images by EOS version is the "
+              "default when --image is omitted", file=sys.stderr)
+        args.image = None
     if args.lab_name and not args.lldp:
         parser.error("--lab-name requires --tag, --output-dir and --lldp")
-    if args.image == "auto" and args.fallback_image is None:
-        parser.error("--image auto requires --fallback-image REPOSITORY:TAG")
-    if args.fallback_image is not None and args.image != "auto":
-        parser.error("--fallback-image requires --image auto")
     if args.fixup_rules is not None and not args.lab_name:
-        parser.error("--fixup-rules requires --lab-name, --image, --tag, --output-dir and --lldp")
+        parser.error("--fixup-rules requires --lab-name, --tag, --output-dir and --lldp")
     if args.verbose and args.fixup_rules is None:
         parser.error("--verbose requires --fixup-rules")
     if args.force and not args.output_dir:

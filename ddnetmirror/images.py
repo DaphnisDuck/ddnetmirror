@@ -1,16 +1,19 @@
-"""Pick a local cEOS image per device by EOS version (--image auto).
+"""Pick a local cEOS image per device by EOS version (the default without --image).
 
-Plain version-string matching against the tags of locally available images in
-the fallback image's repository. It says nothing about whether a config runs on
-an image: no compatibility analysis.
+Plain version-string matching against the tags of the local images in the
+repository `ceos`. It says nothing about whether a config runs on an image: no
+compatibility analysis.
 """
 
 import re
 import subprocess
 
+REPOSITORY = "ceos"
 DOCKER_TIMEOUT = 30  # seconds
 # MAJOR.MINOR.PATCH[.BUILD][LETTERS], e.g. 4.35.7.2M, 4.32.1F
 VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?([A-Za-z]*)")
+# EOS vs EOS64 is not a version difference: EOS64-4.34.2F, 4.34.2F-EOS64 -> 4.34.2F
+EOS_WRAPPER_RE = re.compile(r"(?:EOS(?:64)?-)?(?P<version>.*?)(?:-EOS(?:64)?)?", re.IGNORECASE)
 
 
 class ImageError(Exception):
@@ -26,87 +29,89 @@ def parse_version(text):
     return (int(major), int(minor), int(patch), int(build or 0)), suffix.upper()
 
 
-def split_image(ref):
-    """'repo[:port]/name:tag' -> (repository, tag); a tag is required."""
-    repository, sep, tag = ref.rpartition(":")
-    if not sep or not repository or not tag or "/" in tag or "@" in ref:
-        raise ValueError(f"expected REPOSITORY:TAG, got {ref!r}")
-    return repository, tag
-
-
-def short_repository(repository):
-    """docker.io/library/ceos -> ceos, the name `docker image ls` lists it under
-    (verified with Docker 29.10). Everything else, including other Docker Hub
-    spellings such as registry-1.docker.io/..., is a distinct repository as written."""
-    name = repository.removeprefix("docker.io/library/")
-    return name if name != repository and "/" not in name else repository
-
-
 def local_tags(repository):
     """Return the tags of local Docker images in repository (no pulls, no registry)."""
     command = ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}", repository]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=DOCKER_TIMEOUT)
     except FileNotFoundError:
-        raise ImageError("--image auto needs the docker command, which was not found") from None
+        raise ImageError("picking images needs the docker command, which was not found "
+                         "(or pass --image IMAGE)") from None
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ImageError(f"--image auto: listing local images failed: {exc}") from None
+        raise ImageError(f"listing local images failed: {exc}") from None
     if result.returncode != 0:
         detail = result.stderr.strip() or f"exit status {result.returncode}"
         raise ImageError(
-            f"--image auto: 'docker image ls' failed: {detail} "
-            "(it needs access to the local Docker images, e.g. the docker group)"
+            f"'docker image ls' failed: {detail} "
+            "(it needs access to the local Docker images, e.g. the docker group; "
+            "or pass --image IMAGE)"
         )
     tags = []
     for line in result.stdout.splitlines():
         repo, sep, tag = line.strip().rpartition(":")
         if not sep or not repo:
-            raise ImageError(f"--image auto: unexpected 'docker image ls' output: {line!r}")
+            raise ImageError(f"unexpected 'docker image ls' output: {line!r}")
         if repo == repository and tag != "<none>":
             tags.append(tag)
     return sorted(set(tags))
 
 
-class Selector:
-    """Local candidates for --image auto, checked once before collection."""
+def newest(candidates):
+    """Highest version; ties (e.g. 4.34.8F/4.34.8M) by suffix text, then tag text."""
+    return max(candidates, key=lambda c: (c[1][0], c[1][1], c[0]))
 
-    def __init__(self, fallback):
-        self.fallback = fallback
-        repository, fallback_tag = split_image(fallback)
-        self.repository = short_repository(repository)
-        tags = local_tags(self.repository)
-        if fallback_tag not in tags:
-            raise ImageError(f"fallback image {fallback} is not available locally "
-                             f"(local {self.repository} tags: {', '.join(tags) or 'none'})")
-        self.candidates = [(tag, parse_version(tag)) for tag in tags]
-        self.ignored = [tag for tag, version in self.candidates if version is None]
-        self.candidates = [(tag, v) for tag, v in self.candidates if v is not None]
+
+class Selector:
+    """Local version-tagged ceos images, listed once before collection."""
+
+    def __init__(self, repository=REPOSITORY):
+        self.repository = repository
+        tags = local_tags(repository)
+        parsed = [(tag, parse_version(tag)) for tag in tags]
+        self.ignored = [tag for tag, version in parsed if version is None]
+        self.candidates = [(tag, v) for tag, v in parsed if v is not None]
+        if not self.candidates:
+            raise ImageError(
+                f"no local {repository} image with a version tag such as {repository}:4.34.2F "
+                f"(local {repository} tags: {', '.join(tags) or 'none'}); "
+                "import one, or pass --image IMAGE"
+            )
+
+    def image(self, tag):
+        return f"{self.repository}:{tag}"
 
     def choose(self, eos_version):
-        """Return (image, reason) for a device's EOS version string.
+        """Return (image, reason, cross_train) for a device's EOS version string.
 
-        1. a tag equal to the version; 2. else the closest tag in the same
-        MAJOR.MINOR train: smallest PATCH difference, then smallest BUILD
-        difference, then the same letter suffix (F/M), then the newer version,
-        then the tag text; 3. else the fallback. Never crosses trains.
+        1. a tag equal to the version; 2. else the newest in the same
+        MAJOR.MINOR train; 3. else the newest in the nearest train, the newer
+        train on equal distance; 4. unknown or unusable version: the newest.
         """
-        version = parse_version(eos_version)
         if not eos_version:
-            return self.fallback, "fallback: EOS version unknown"
+            tag, _ = newest(self.candidates)
+            return self.image(tag), "EOS version unknown; newest local image", False
+        wrapped = EOS_WRAPPER_RE.fullmatch(eos_version)  # None e.g. with a line break
+        text = wrapped["version"] if wrapped else eos_version
+        version = parse_version(text)
         if version is None:
-            return self.fallback, f"fallback: EOS version {eos_version!r} is not MAJOR.MINOR.PATCH[.BUILD][F/M]"
-        (major, minor, patch, build), suffix = version
-        if any(tag == eos_version for tag, _ in self.candidates):
-            return f"{self.repository}:{eos_version}", "exact match"
-        same_train = [(tag, v) for tag, v in self.candidates if v[0][:2] == (major, minor)]
-        if not same_train:
-            return self.fallback, f"fallback: no local {self.repository} image in the {major}.{minor} train"
+            tag, _ = newest(self.candidates)
+            return (self.image(tag), f"EOS version {eos_version!r} not recognized; newest local image",
+                    False)
+        if any(tag == text for tag, _ in self.candidates):
+            return self.image(text), "exact match", False
+        train = version[0][:2]
+        same = [c for c in self.candidates if c[1][0][:2] == train]
+        if same:
+            tag, _ = newest(same)
+            return self.image(tag), f"newest in the {train[0]}.{train[1]} train", False
 
-        def key(candidate):
-            tag, (nums, tag_suffix) = candidate
-            return (abs(nums[2] - patch), abs(nums[3] - build), tag_suffix != suffix,
-                    tuple(-n for n in nums), tag)
+        def distance(candidate):
+            other = candidate[1][0][:2]
+            # nearest train first; on equal distance the newer train
+            return (abs(other[0] - train[0]), abs(other[1] - train[1]), other < train)
 
-        tag, _ = min(same_train, key=key)
-        return (f"{self.repository}:{tag}",
-                f"closest in the {major}.{minor} train (version match only, not a compatibility check)")
+        nearest = min(distance(c) for c in self.candidates)
+        tag, (nums, _) = newest([c for c in self.candidates if distance(c) == nearest])
+        return (self.image(tag),
+                f"no local image in the {train[0]}.{train[1]} train; newest in the nearest "
+                f"train {nums[0]}.{nums[1]}", True)
