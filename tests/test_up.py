@@ -47,9 +47,9 @@ def test_up_fetches_with_force_then_deploys_with_containerlab(lab, capsys):
     assert up.main([], prog="ddn up") == 0
 
     assert lab["fetch"] == [([
-        "--server", "cv.example.invalid", "--tag", "site=lab", "--output-dir", ".", "--lldp",
-        "--lab-name", "lab1", "--force", "--ca-file", "./ca.pem", "--image", "ceos:4.35.7.2M",
-        "--fixup-rules", "rules/lab.yml",
+        "--server=cv.example.invalid", "--tag=site=lab", "--output-dir=.", "--lldp",
+        "--lab-name=lab1", "--force", "--ca-file=./ca.pem", "--image=ceos:4.35.7.2M",
+        "--fixup-rules=rules/lab.yml",
     ], "ddn up", ".")]  # the fixup path is resolved against the project directory (base_dir)
     assert lab["runs"] == [
         (["docker", "ps", "-a", "--filter", "label=containerlab=lab1", "--format", "{{.Names}}"],
@@ -65,6 +65,32 @@ def test_generated_fetch_arguments_are_valid_for_ddn_fetch():
 
     assert (args.output_dir, args.lab_name, args.lldp, args.force, args.fixup_rules) == (
         ".", "lab1", True, True, "none")
+
+
+def test_values_starting_with_a_dash_stay_values():
+    project = {"server": "-cv", "name": "lab1", "tag": "-site=lab", "fixup-rules": "-rules.yml",
+               "image": "-ceos:1", "cacert": "-ca.pem"}
+    args = fetch_config.build_parser().parse_args(up.fetch_args(project))
+
+    assert (args.server, args.tag, args.fixup_rules, args.image, args.ca_file) == (
+        "-cv", ("-site", "lab"), "-rules.yml", "-ceos:1", "-ca.pem")
+
+
+def test_containerlab_that_cannot_be_started_is_a_clear_error(lab, monkeypatch, capsys):
+    real_run = up.subprocess.run
+
+    def run(command, **kwargs):
+        if command[0] == "sudo":
+            raise FileNotFoundError(2, "No such file or directory", "sudo")
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(up.subprocess, "run", run)
+
+    assert up.main([]) == 1
+
+    err = capsys.readouterr().err
+    assert "could not run sudo: No such file or directory; nothing was deployed or torn down" in err
+    assert f"remove a partial lab with: sudo {lab['exe']} destroy -t ./lab1.clab.yml" in err
 
 
 def test_containerlab_runs_without_sudo_as_root(lab, monkeypatch):

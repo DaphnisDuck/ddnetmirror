@@ -69,13 +69,16 @@ def load_project(directory="."):
 
 
 def fetch_args(project, directory="."):
-    """ddn fetch arguments for the project: regenerate in place with --force."""
-    args = ["--server", project["server"], "--tag", project["tag"], "--output-dir", directory,
-            "--lldp", "--lab-name", project["name"], "--force"]
+    """ddn fetch arguments for the project: regenerate in place with --force.
+
+    Every value is attached as --option=value, so a value starting with "-"
+    stays a value instead of being parsed as an option."""
+    args = [f"--server={project['server']}", f"--tag={project['tag']}",
+            f"--output-dir={directory}", "--lldp", f"--lab-name={project['name']}", "--force"]
     for key, option in (("cacert", "--ca-file"), ("image", "--image"),
                         ("fixup-rules", "--fixup-rules")):
         if key in project:
-            args += [option, project[key]]
+            args.append(f"{option}={project[key]}")
     return args
 
 
@@ -148,6 +151,13 @@ def main(argv=None, prog=None):
         code = subprocess.run(deploy).returncode  # output streams through unchanged
     except KeyboardInterrupt:
         code = 130
+    except OSError as exc:  # sudo or containerlab could not be started
+        print(f"error: could not run {deploy[0]}: {exc.strerror or exc}; nothing was deployed "
+              "or torn down. Check with: "
+              f"{' '.join(containerlab_command('inspect', '-t', topology))}; remove a partial lab "
+              f"with: {' '.join(containerlab_command('destroy', '-t', topology))}",
+              file=sys.stderr)
+        return 1
     if code != 0:
         print(f"error: containerlab deploy failed (exit {code}); nothing was torn down. "
               f"Inspect: {' '.join(containerlab_command('inspect', '-t', topology))}; "
