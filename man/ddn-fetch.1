@@ -3,7 +3,7 @@
 ddn fetch \- fetch running configs, LLDP links and a Containerlab topology from CloudVision
 .SH SYNOPSIS
 .B ddn
-fetch [-h] --server SERVER (--hostname HOSTNAME | --tag KEY=VALUE) [--ca-file CA_FILE] [--token-file PATH] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml] [--verbose] [--force]
+fetch [-h] --server SERVER (--hostname HOSTNAME | --tag EXPR) [--ca-file CA_FILE] [--token-file PATH] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml] [--verbose] [--force]
 .SH DESCRIPTION
 Fetch running configs from CloudVision and save them unchanged. The service\-account token is read from \-\-token\-file, else from CLOUDVISION_TOKEN, else from $XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token).
 
@@ -17,8 +17,11 @@ CloudVision host[:port] (default port 443)
 device hostname as shown in CloudVision inventory (any case)
 
 .TP
-\fB\-\-tag\fR \fI\,KEY=VALUE\/\fR
-device tag; must match exactly one device unless \-\-output\-dir is given
+\fB\-\-tag\fR \fI\,EXPR\/\fR
+device tag KEY=VALUE (exact, case\-sensitive), or an expression of such terms
+with not, and, or (in that precedence) and parentheses, e.g. '(site=lab or
+site=dr) and not role=spine'; 'not' covers devices without the tag. Must match
+exactly one device unless \-\-output\-dir is given
 
 .TP
 \fB\-\-ca\-file\fR \fI\,CA_FILE\/\fR
