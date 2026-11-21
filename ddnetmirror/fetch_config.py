@@ -234,7 +234,7 @@ def read_token_file(path, missing):
         if info.st_mode & 0o077:
             raise FetchError(f"token file {path} has mode {stat.S_IMODE(info.st_mode):04o}; "
                              f"group/other access is refused (chmod 600 {path})")
-        directory = os.path.dirname(os.path.abspath(path))
+        directory = os.path.dirname(path) or "."  # as given: the kernel resolved "..", not abspath
         dir_mode = os.stat(directory).st_mode
         if dir_mode & 0o022:
             raise FetchError(f"directory {directory} has mode {stat.S_IMODE(dir_mode):04o}; "

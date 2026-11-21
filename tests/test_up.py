@@ -6,6 +6,7 @@ import pytest
 from ddnetmirror import fetch_config, up
 
 PROJECT = "server: cv.example.invalid\nname: lab1\ntag: site=lab\n"
+REAL_GETEUID = os.geteuid
 
 
 @pytest.fixture
@@ -64,6 +65,7 @@ def test_token_file_is_taken_from_the_command_line_and_forwarded_to_fetch(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("CLOUDVISION_TOKEN", "env-token")
+    monkeypatch.setattr(up.os, "geteuid", REAL_GETEUID)  # the token file checks need the real uid
     (tmp_path / "tokens").mkdir(mode=0o700)
     (tmp_path / "tokens" / "staging").write_text("staging-token\n")
     (tmp_path / "tokens" / "staging").chmod(0o600)

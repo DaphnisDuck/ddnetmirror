@@ -162,3 +162,15 @@ def test_empty_token_file_option_is_a_usage_error(home, capsys):
 
     assert exc.value.code == 2
     assert "--token-file must not be empty" in capsys.readouterr().err
+
+
+def test_parent_directory_is_checked_as_the_kernel_resolves_it(home, tmp_path):
+    # safe/link/../token opens open/token: the open directory must be checked, not safe/
+    (tmp_path / "open" / "sub").mkdir(parents=True)
+    write_token(tmp_path / "open" / "token", dir_mode=0o777)
+    (tmp_path / "safe").mkdir(mode=0o700)
+    (tmp_path / "safe" / "link").symlink_to(tmp_path / "open" / "sub")
+    path = f"{tmp_path}/safe/link/../token"
+
+    with pytest.raises(FetchError, match=r"directory .*/safe/link/\.\. has mode 0777"):
+        read_token(path)
