@@ -98,8 +98,19 @@ def test_values_starting_with_a_dash_stay_values():
                "image": "-ceos:1", "cacert": "-ca.pem"}
     args = fetch_config.build_parser().parse_args(up.fetch_args(project))
 
-    assert (args.server, args.tag, args.fixup_rules, args.image, args.ca_file) == (
-        "-cv", ("-site", "lab"), "-rules.yml", "-ceos:1", "-ca.pem")
+    assert (args.server, args.tag[1], args.fixup_rules, args.image, args.ca_file) == (
+        "-cv", ("tag", "-site", "lab"), "-rules.yml", "-ceos:1", "-ca.pem")
+
+
+def test_project_tag_may_be_an_expression_passed_to_fetch_unchanged(lab, tmp_path):
+    expression = "(site=lab or site=dr) and not role=spine"
+    (tmp_path / "ddnetmirror.yml").write_text(f"server: cv\nname: lab1\ntag: {expression}\n")
+
+    assert up.main([]) == 0
+
+    argv = lab["fetch"][0][0]
+    assert f"--tag={expression}" in argv
+    assert fetch_config.build_parser().parse_args(argv).tag == fetch_config.parse_tag(expression)
 
 
 def test_containerlab_that_cannot_be_started_is_a_clear_error(lab, monkeypatch, capsys):
@@ -150,6 +161,7 @@ def test_containerlab_runs_without_sudo_as_root(lab, monkeypatch):
     ("server: cv\ntag: site=lab\n", "missing name"),
     ("server: cv\nname: lab1\n", "missing tag"),
     ("server: cv\nname: lab1\ntag: site\n", "expected KEY=VALUE, got 'site'"),
+    ("server: cv\nname: lab1\ntag: site=lab and\n", "bad tag expression 'site=lab and'"),
     ("server: cv\nname: -lab\ntag: site=lab\n", "is not a valid Containerlab lab name"),
     ("server: 443\nname: lab1\ntag: site=lab\n", "server must be a non-empty string"),
     (PROJECT + "image: auto\n", "leave image out"),

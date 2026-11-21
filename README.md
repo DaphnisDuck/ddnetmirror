@@ -3,7 +3,7 @@
 Build a Containerlab lab of a selected part of an Arista network, from what CloudVision (CVP or CVaaS) already knows about it.
 
 ddnetmirror:
-1. selects devices by CloudVision tag;
+1. selects devices by CloudVision tag, or by a small [tag expression](#tag-expressions);
 2. saves their running configs **unchanged**;
 3. finds the links between them from LLDP;
 4. optionally applies your own text fixup rules to *copies* of the configs;
@@ -123,6 +123,7 @@ All files are created with mode 0600. Typical output:
 
 ```
 fixup rules: rules.yml (--fixup-rules)
+selected 4 devices with tag site=lab
 wrote running config for leaf1 (SN-LEAF1, EOS 4.34.2F) to lab1/configs/collected/leaf1.cfg
 wrote startup config for leaf1 with fixups to lab1/configs/startup/leaf1.cfg
 ...
@@ -135,6 +136,30 @@ leaf2 Ethernet2 <-> spine2 Ethernet2 [one-sided]
 ...
 wrote Containerlab topology lab1/lab1.clab.yml (4 nodes, 5 links)
 ```
+
+### Tag expressions
+
+`--tag` takes one `KEY=VALUE` or a small Boolean expression of them:
+
+```sh
+ddn fetch --server www.arista.io --tag '(site=lab or site=dr) and not role=spine' --output-dir lab1 --lldp
+```
+
+```text
+role=leaf
+role=leaf or role=spine
+site=lab and role=leaf
+site=lab and not role=spine
+not role=spine
+(site=lab or site=dr) and role=leaf
+```
+
+- **Operators.** `not`, `and` and `or`, in that order of precedence, with parentheses for grouping: `site=dr or site=lab and role=spine` means `site=dr or (site=lab and role=spine)`. Operators are lowercase words separated by whitespace or parentheses.
+- **Terms** match a CloudVision device tag exactly, including case. `not role=spine` selects every inventory device without that tag, including devices with no `role` tag at all.
+- **Plain tags are unchanged.** A `--tag` without a standalone `and`, `or` or `not` word is one `KEY=VALUE`, as before. Its value may contain spaces or parentheses (`site=New York`). Operator words inside a term are just text (`team=and` is a plain tag).
+- **Inside an expression,** a term can't contain whitespace or parentheses; such a tag can't be combined, and the expression is refused with a syntax error. There is no quoting.
+- **Validation.** A malformed expression (empty, a dangling operator, unbalanced parentheses, a term without `=`) is a usage error before anything is contacted or written.
+- **Selection.** Each device is selected once, in device-ID order, and the count is printed (`selected 12 devices with tag …`). There is no size limit and no confirmation: a broad expression such as `not role=spine` is a valid choice. No match is the same error as for a plain tag. Without `--output-dir`, the expression must still match exactly one device.
 
 `lab1/lab1.clab.yml`:
 
@@ -239,7 +264,7 @@ A lab project is a directory with a `ddnetmirror.yml`:
 # ~/labs/fabric/ddnetmirror.yml
 server: www.arista.io     # CloudVision host[:port]
 name: fabric              # lab name and topology file name: fabric.clab.yml
-tag: site=lab             # device tag KEY=VALUE
+tag: site=lab             # device tag KEY=VALUE, or a tag expression ('role=leaf or role=spine')
 # optional:
 # cacert: ca.pem          # CA bundle for on-prem CVP (relative to this directory)
 # fixup-rules: rules.yml  # relative to this directory, or "none"; default: the user default rules

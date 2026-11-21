@@ -16,6 +16,10 @@
 
 `ddn fetch --server {{www.arista.io}} --tag {{site=lab}} --output-dir {{lab1}} --lldp --lab-name {{lab1}} --image {{ceos:4.35.7.2M}} --fixup-rules {{rules.yml}}`
 
+- Collect the devices selected by a tag expression (`not`, `and`, `or`, parentheses):
+
+`ddn fetch --server {{www.arista.io}} --tag '{{(site=lab or site=dr) and not role=spine}}' --output-dir {{lab1}} --lldp`
+
 - Write a topology, picking a local `ceos` image per device by EOS version (the default without `--image`):
 
 `ddn fetch --server {{www.arista.io}} --tag {{site=lab}} --output-dir {{lab1}} --lldp --lab-name {{lab1}}`
