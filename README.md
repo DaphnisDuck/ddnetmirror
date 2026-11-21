@@ -24,7 +24,7 @@ Saved running configs are real device configs. They can contain hashed credentia
 ## Prerequisites
 
 - **Linux with Python ≥ 3.10.**
-- **A CloudVision service-account token**, from the `CLOUDVISION_TOKEN` environment variable or an optional [token file](#token-file). It is never accepted as an argument and never logged.
+- **A CloudVision service-account token**, from an optional [token file](#token-file) or the `CLOUDVISION_TOKEN` environment variable. The token value is never accepted as an argument (only a token file's path is) and never logged.
 - **To run the lab:** [Containerlab](https://containerlab.dev) and a cEOS image that you obtain and import yourself (for example `ceos:4.35.7.2M`). ddnetmirror does not download images. `ddn up` runs Containerlab through `sudo` (see [`ddn up`](#one-command-ddn-up)).
 
 ### Token file
@@ -36,7 +36,12 @@ install -d -m 700 ~/.config/ddnetmirror
 f=~/.config/ddnetmirror/token; touch "$f" && chmod 600 "$f" && cat > "$f"   # paste the token, then Ctrl-D
 ```
 
-- **Precedence:** `CLOUDVISION_TOKEN` wins when it is set and not empty; the file is then not read. With neither, the command stops with an error naming both.
+- **Precedence:**
+  1. `--token-file PATH` ([below](#one-token-file-per-environment)), when given;
+  2. otherwise `CLOUDVISION_TOKEN`, when it is set and not empty;
+  3. otherwise the default token file.
+
+  Only the first source that applies is read. With none of them, the command stops with an error naming the variable and the default file.
 - **Read-only:** ddnetmirror only reads the file. It never creates it or saves a token anywhere.
 - **Refused files.** ddnetmirror refuses the token file, without showing its content, if it is:
   - a symlink or not a regular file;
@@ -46,6 +51,29 @@ f=~/.config/ddnetmirror/token; touch "$f" && chmod 600 "$f" && cat > "$f"   # pa
 
   Mode 0600 for the file and 0700 for the directory are recommended.
 - **No encryption.** File permissions are not encrypted storage: anyone with your account, or root, can read the token. Prefer a scoped, read-only, short-lived service-account token.
+
+### One token file per environment
+
+With tokens for several CloudVision environments, keep one file per environment and pick it with `--token-file PATH` on `ddn fetch` or `ddn up`:
+
+```sh
+install -d -m 700 ~/.config/ddnetmirror/tokens
+for env in production staging cvaas; do
+    f=~/.config/ddnetmirror/tokens/$env; touch "$f" && chmod 600 "$f"
+done
+cat > ~/.config/ddnetmirror/tokens/staging     # paste that environment's token, then Ctrl-D
+
+ddn fetch --server cvp-staging.example.net --ca-file ca.pem --hostname leaf1 \
+    --token-file ~/.config/ddnetmirror/tokens/staging
+ddn fetch --server www.arista.io --tag site=lab --output-dir lab1 --lldp \
+    --token-file ~/.config/ddnetmirror/tokens/cvaas
+cd ~/labs/fabric && ddn up --token-file ~/.config/ddnetmirror/tokens/production
+```
+
+- **The option wins**, even when `CLOUDVISION_TOKEN` is set.
+- **No fallback.** If the named file is missing or refused, the command stops with an error; it never falls back to the variable or the default file.
+- **Same checks** as the default file (the list above); symlinks are refused here too, so name the real file. `~` is expanded, and a relative path is relative to the current directory.
+- **Not in `ddnetmirror.yml`.** `ddn up` takes `--token-file` on its command line only.
 
 ## Install
 
@@ -223,7 +251,7 @@ cd ~/labs/fabric && ddn up
 ```
 
 `ddn up` does this:
-1. **Validates the project file.** Unknown keys are refused, and so is a token: the token comes from `CLOUDVISION_TOKEN` or the [token file](#token-file) as for `ddn fetch`. Reading the file runs nothing.
+1. **Validates the project file.** Unknown keys are refused, and so is a token or token file: the token comes from `--token-file PATH` on the `ddn up` command line, `CLOUDVISION_TOKEN` or the default [token file](#token-file), as for `ddn fetch`. Reading the file runs nothing.
 2. **Refuses an existing lab.** If Docker has any container (running or stopped) of a Containerlab lab with this name, `ddn up` refuses and changes nothing. It tells you how to remove the lab. It never destroys or redeploys a lab itself.
 3. **Regenerates the project's files** in this directory, exactly like `ddn fetch --tag TAG --output-dir . --lldp --lab-name NAME --force`: `configs/collected/`, `configs/startup/` (with fixup rules) and `NAME.clab.yml`. Other files are untouched.
 4. **Deploys only a complete lab.** If any device failed or no topology was written, it stops with `not deploying` and the files are left for you to inspect.
