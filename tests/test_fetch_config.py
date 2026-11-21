@@ -275,6 +275,19 @@ def test_token_file_is_used_without_the_environment_variable(cv, monkeypatch, tm
     assert TOKEN not in out.out + out.err
 
 
+def test_explicit_token_file_is_used_instead_of_the_environment_variable(cv, tmp_path, capsys):
+    (tmp_path / "tokens").mkdir(mode=0o700)
+    (tmp_path / "tokens" / "cvaas").write_text("cvaas-token\n")
+    (tmp_path / "tokens" / "cvaas").chmod(0o600)
+    cv["result"]["config"] = "hostname leaf1\n"
+
+    assert run("--token-file", "~/tokens/cvaas") == 0  # HOME is tmp_path
+
+    assert cv["compliance_calls"] == [("cv.example:443", "cvaas-token", None)]
+    out = capsys.readouterr()
+    assert "cvaas-token" not in out.out + out.err
+
+
 def test_selects_device_by_tag(cv, tmp_path, capsys):
     cv["tagged"] = ["SN1"]
     cv["version"] = "4.32.1F"

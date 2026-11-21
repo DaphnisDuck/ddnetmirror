@@ -193,23 +193,34 @@ def token_path():
     return os.path.join(base, "ddnetmirror", "token")
 
 
-def read_token():
-    """Return the CloudVision token: $CLOUDVISION_TOKEN if set, else the token file.
+def read_token(token_file=None):
+    """Return the CloudVision token: from token_file if given (an unusable file is
+    an error, never a fallback), else $CLOUDVISION_TOKEN if set, else the default
+    token file.
 
-    Only reads; never writes or copies the token anywhere. The file must be a
+    Only reads; never writes or copies the token anywhere. A token file must be a
     regular file (not a symlink) owned by the current user with no group/other
     permissions, in a directory that group/other cannot write. Error messages
     name paths and modes only, never file content.
     """
+    if token_file is not None:
+        path = os.path.expanduser(token_file)
+        return read_token_file(path, f"token file {path} (--token-file) does not exist")
     token = os.environ.get(TOKEN_ENV, "").strip()
     if token:
         return checked_token(token, TOKEN_ENV)
     path = token_path()
+    return read_token_file(path, f"no CloudVision token: set {TOKEN_ENV} or create {path} "
+                                 "(mode 0600, directory 0700)")
+
+
+def read_token_file(path, missing):
+    """Read and check one token file; missing is the error message if it does not exist.
+    A relative path is relative to the working directory."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
-        raise FetchError(f"no CloudVision token: set {TOKEN_ENV} or create {path} "
-                         "(mode 0600, directory 0700)") from None
+        raise FetchError(missing) from None
     except OSError as exc:
         if os.path.islink(path):
             raise FetchError(f"token file {path} is a symbolic link; refusing it") from None
@@ -223,7 +234,7 @@ def read_token():
         if info.st_mode & 0o077:
             raise FetchError(f"token file {path} has mode {stat.S_IMODE(info.st_mode):04o}; "
                              f"group/other access is refused (chmod 600 {path})")
-        directory = os.path.dirname(path)
+        directory = os.path.dirname(path) or "."  # as given: the kernel resolved "..", not abspath
         dir_mode = os.stat(directory).st_mode
         if dir_mode & 0o022:
             raise FetchError(f"directory {directory} has mode {stat.S_IMODE(dir_mode):04o}; "
@@ -289,7 +300,7 @@ def run(args, base_dir=None):
             image = images.Selector()
         except images.ImageError as exc:
             raise FetchError(str(exc)) from None
-    token = read_token()
+    token = read_token(args.token_file)
     by_hostname = args.tag is None
     output = args.output
     if output:
@@ -597,12 +608,23 @@ def choose_images(selector, saved):
     return default, {n: i for n, i in chosen.items() if i != default}
 
 
+def add_token_file_argument(parser):
+    """--token-file, shared by ddn fetch and ddn up."""
+    parser.add_argument(
+        "--token-file",
+        metavar="PATH",
+        help=f"read the CloudVision token from this file instead of {TOKEN_ENV} or the "
+        "default token file (e.g. one file per environment). Same checks as the default "
+        "file: owner-only regular file, not a symlink; an unusable file is an error",
+    )
+
+
 def build_parser(prog=None):
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Fetch running configs from CloudVision and save them unchanged. "
-        f"The service-account token is read from {TOKEN_ENV}, or else from "
-        "$XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token)."
+        f"The service-account token is read from --token-file, else from {TOKEN_ENV}, "
+        "else from $XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token)."
     )
     parser.add_argument("--server", required=True, help="CloudVision host[:port] (default port 443)")
     selector = parser.add_mutually_exclusive_group(required=True)
@@ -611,6 +633,7 @@ def build_parser(prog=None):
     )
     selector.add_argument("--tag", type=parse_tag, metavar="KEY=VALUE", help="device tag; must match exactly one device unless --output-dir is given")
     parser.add_argument("--ca-file", help="PEM CA bundle for on-prem CVP with a private CA")
+    add_token_file_argument(parser)
     outputs = parser.add_mutually_exclusive_group()
     outputs.add_argument("--output", help="output file (default: <device hostname>.cfg); never overwritten")
     outputs.add_argument(
@@ -684,6 +707,8 @@ def main(argv=None, prog=None, base_dir=None):
     if args.verbose and (not args.lab_name or args.fixup_rules == NO_FIXUPS):
         parser.error("--verbose requires fixup rules (--lab-name with --fixup-rules or "
                      "the user default rules file)")
+    if args.token_file is not None and not args.token_file.strip():
+        parser.error("--token-file must not be empty")
     if args.force and not args.output_dir:
         parser.error("--force requires --tag and --output-dir")
     try:

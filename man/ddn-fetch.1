@@ -1,11 +1,11 @@
-.TH DDN-FETCH "1" "2026\-11\-19" "ddnetmirror 0.0.1" "ddnetmirror manual"
+.TH DDN-FETCH "1" "2026\-11\-21" "ddnetmirror 0.0.1" "ddnetmirror manual"
 .SH NAME
 ddn fetch \- fetch running configs, LLDP links and a Containerlab topology from CloudVision
 .SH SYNOPSIS
 .B ddn
-fetch [-h] --server SERVER (--hostname HOSTNAME | --tag KEY=VALUE) [--ca-file CA_FILE] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml] [--verbose] [--force]
+fetch [-h] --server SERVER (--hostname HOSTNAME | --tag KEY=VALUE) [--ca-file CA_FILE] [--token-file PATH] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml] [--verbose] [--force]
 .SH DESCRIPTION
-Fetch running configs from CloudVision and save them unchanged. The service\-account token is read from CLOUDVISION_TOKEN, or else from $XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token).
+Fetch running configs from CloudVision and save them unchanged. The service\-account token is read from \-\-token\-file, else from CLOUDVISION_TOKEN, else from $XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token).
 
 .SH OPTIONS
 .TP
@@ -23,6 +23,12 @@ device tag; must match exactly one device unless \-\-output\-dir is given
 .TP
 \fB\-\-ca\-file\fR \fI\,CA_FILE\/\fR
 PEM CA bundle for on\-prem CVP with a private CA
+
+.TP
+\fB\-\-token\-file\fR \fI\,PATH\/\fR
+read the CloudVision token from this file instead of CLOUDVISION_TOKEN or the
+default token file (e.g. one file per environment). Same checks as the default
+file: owner\-only regular file, not a symlink; an unusable file is an error
 
 .TP
 \fB\-\-output\fR \fI\,OUTPUT\/\fR

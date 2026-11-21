@@ -6,6 +6,7 @@ import pytest
 from ddnetmirror import fetch_config, up
 
 PROJECT = "server: cv.example.invalid\nname: lab1\ntag: site=lab\n"
+REAL_GETEUID = os.geteuid
 
 
 @pytest.fixture
@@ -57,6 +58,31 @@ def test_up_fetches_with_force_then_deploys_with_containerlab(lab, capsys):
         (["sudo", lab["exe"], "deploy", "-t", "./lab1.clab.yml"], {}),  # output not captured
     ]
     assert f"deploying: sudo {lab['exe']} deploy -t ./lab1.clab.yml" in capsys.readouterr().out
+
+
+def test_token_file_is_taken_from_the_command_line_and_forwarded_to_fetch(
+        lab, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("CLOUDVISION_TOKEN", "env-token")
+    monkeypatch.setattr(up.os, "geteuid", REAL_GETEUID)  # the token file checks need the real uid
+    (tmp_path / "tokens").mkdir(mode=0o700)
+    (tmp_path / "tokens" / "staging").write_text("staging-token\n")
+    (tmp_path / "tokens" / "staging").chmod(0o600)
+    tokens = []
+
+    def fetch(argv, prog=None, base_dir=None):  # the real fetch parser and token reading
+        tokens.append(fetch_config.read_token(fetch_config.build_parser().parse_args(argv).token_file))
+        return 0
+
+    monkeypatch.setattr(fetch_config, "main", fetch)
+
+    assert up.main(["--token-file", "~/tokens/staging"]) == 0
+
+    assert tokens == ["staging-token"]
+    assert "staging-token" not in str(lab["runs"]) + str(capsys.readouterr())
+    assert up.fetch_args(up.load_project("."), ".", "~/tokens/staging")[-1] == (
+        "--token-file=~/tokens/staging")
 
 
 def test_generated_fetch_arguments_are_valid_for_ddn_fetch():

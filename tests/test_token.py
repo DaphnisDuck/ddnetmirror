@@ -119,3 +119,58 @@ def test_token_with_inner_whitespace_or_control_characters_is_refused_silently(
     out = capsys.readouterr()
     assert "the token contains whitespace, control or non-ASCII characters" in out.err
     assert "Secret" not in out.out + out.err
+
+
+# --token-file PATH: an explicit file wins over everything and never falls back
+
+@pytest.fixture
+def fallbacks(home, monkeypatch):
+    """A usable default token file and CLOUDVISION_TOKEN, neither of which may be used."""
+    write_token(home, "default-token\n")
+    monkeypatch.setenv("CLOUDVISION_TOKEN", "env-token")
+
+
+def test_explicit_token_file_wins_over_environment_and_default(fallbacks, tmp_path, monkeypatch):
+    write_token(tmp_path / "tokens" / "staging")
+    monkeypatch.chdir(tmp_path)
+
+    assert read_token("tokens/staging") == SECRET  # relative to the working directory
+    assert read_token("~/tokens/staging") == SECRET  # ~ expanded, as a shell may not have
+
+
+@pytest.mark.parametrize("setup, message", [
+    (lambda p: None, "token file {path} (--token-file) does not exist"),
+    (make_symlink, "token file {path} is a symbolic link"),
+    (lambda p: write_token(p, mode=0o644), "token file {path} has mode 0644"),
+])
+def test_unusable_explicit_token_file_is_an_error_without_fallback(fallbacks, tmp_path, setup,
+                                                                   message):
+    path = tmp_path / "tokens" / "staging"
+    path.parent.mkdir(mode=0o700)
+    setup(path)
+
+    with pytest.raises(FetchError) as exc:
+        read_token(str(path))
+
+    assert message.format(path=path) in str(exc.value)
+    assert SECRET not in str(exc.value)
+
+
+def test_empty_token_file_option_is_a_usage_error(home, capsys):
+    with pytest.raises(SystemExit) as exc:
+        fetch_config.main(["--server", "cv.example", "--hostname", "leaf1", "--token-file", ""])
+
+    assert exc.value.code == 2
+    assert "--token-file must not be empty" in capsys.readouterr().err
+
+
+def test_parent_directory_is_checked_as_the_kernel_resolves_it(home, tmp_path):
+    # safe/link/../token opens open/token: the open directory must be checked, not safe/
+    (tmp_path / "open" / "sub").mkdir(parents=True)
+    write_token(tmp_path / "open" / "token", dir_mode=0o777)
+    (tmp_path / "safe").mkdir(mode=0o700)
+    (tmp_path / "safe" / "link").symlink_to(tmp_path / "open" / "sub")
+    path = f"{tmp_path}/safe/link/../token"
+
+    with pytest.raises(FetchError, match=r"directory .*/safe/link/\.\. has mode 0777"):
+        read_token(path)

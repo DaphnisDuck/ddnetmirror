@@ -68,8 +68,9 @@ def load_project(directory="."):
     return project
 
 
-def fetch_args(project, directory="."):
+def fetch_args(project, directory=".", token_file=None):
     """ddn fetch arguments for the project: regenerate in place with --force.
+    token_file comes from the ddn up command line, never from the project file.
 
     Every value is attached as --option=value, so a value starting with "-"
     stays a value instead of being parsed as an option."""
@@ -79,6 +80,8 @@ def fetch_args(project, directory="."):
                         ("fixup-rules", "--fixup-rules")):
         if key in project:
             args.append(f"{option}={project[key]}")
+    if token_file is not None:
+        args.append(f"--token-file={token_file}")
     return args
 
 
@@ -108,19 +111,25 @@ def lab_containers(name):
 
 
 def build_parser(prog=None):
-    return argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         prog=prog,
         description=f"Build and deploy the lab described by ./{PROJECT_FILE}: refuse if the "
         "lab already has containers, collect configs and LLDP from CloudVision, apply fixup "
         "rules, regenerate the project's files (as ddn fetch --force), and only if that "
         "completed, run 'containerlab deploy' (through sudo unless containerlab runs as you). "
         f"{PROJECT_FILE} keys: server, name, tag (KEY=VALUE); optional cacert, "
-        "fixup-rules (a path or none), image. The token is read as for ddn fetch.",
+        "fixup-rules (a path or none), image. The token is read as for ddn fetch: "
+        "--token-file, else CLOUDVISION_TOKEN, else the default token file.",
     )
+    fetch_config.add_token_file_argument(parser)
+    return parser
 
 
 def main(argv=None, prog=None):
-    build_parser(prog).parse_args(argv)
+    parser = build_parser(prog)
+    args = parser.parse_args(argv)
+    if args.token_file is not None and not args.token_file.strip():
+        parser.error("--token-file must not be empty")
     directory = "."
     try:
         project = load_project(directory)
@@ -141,7 +150,8 @@ def main(argv=None, prog=None):
         return 1
 
     try:
-        code = fetch_config.main(fetch_args(project, directory), prog=prog, base_dir=directory)
+        code = fetch_config.main(fetch_args(project, directory, args.token_file), prog=prog,
+                                 base_dir=directory)
     except SystemExit as exc:  # usage error from the generated arguments
         code = exc.code if isinstance(exc.code, int) else 2
     if code != 0:
