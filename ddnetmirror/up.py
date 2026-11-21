@@ -117,7 +117,8 @@ def build_parser(prog=None):
         "lab already has containers, collect configs and LLDP from CloudVision, apply fixup "
         "rules, regenerate the project's files (as ddn fetch --force), and only if that "
         "completed, run 'containerlab deploy' (through sudo unless containerlab runs as you). "
-        f"{PROJECT_FILE} keys: server, name, tag (KEY=VALUE); optional cacert, "
+        f"{PROJECT_FILE} keys: server, name, tag (KEY=VALUE or an expression, as for ddn "
+        "fetch --tag); optional cacert, "
         "fixup-rules (a path or none), image. The token is read as for ddn fetch: "
         "--token-file, else CLOUDVISION_TOKEN, else the default token file.",
     )

@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import importlib.metadata
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -53,6 +54,17 @@ def find_device(host, port, token, ca_file, device_filter, described):
     return devices[0]
 
 
+def list_inventory(host, port, token, ca_file):
+    """Return every inventory record."""
+    request = inventory.DeviceStreamRequest()
+    try:
+        return asyncio.run(
+            _get_all(host, port, token, ca_file, inventory.DeviceServiceStub, request)
+        )
+    except Exception as exc:
+        raise FetchError(f"inventory lookup failed: {exc}") from exc
+
+
 def find_device_by_hostname(host, port, token, ca_file, hostname):
     """Return the one inventory record whose hostname equals hostname ignoring case.
 
@@ -60,13 +72,7 @@ def find_device_by_hostname(host, port, token, ca_file, hostname):
     casefolded; the record keeps its CloudVision hostname. Several devices whose
     hostnames differ only in case are an error, never a guess.
     """
-    request = inventory.DeviceStreamRequest()
-    try:
-        devices = asyncio.run(
-            _get_all(host, port, token, ca_file, inventory.DeviceServiceStub, request)
-        )
-    except Exception as exc:
-        raise FetchError(f"inventory lookup failed: {exc}") from exc
+    devices = list_inventory(host, port, token, ca_file)
     wanted = hostname.casefold()
     found = [d for d in devices if (d.hostname or "").casefold() == wanted]
     if not found:
@@ -77,8 +83,8 @@ def find_device_by_hostname(host, port, token, ca_file, hostname):
     return found[0]
 
 
-def find_tagged_device_ids(host, port, token, ca_file, label, value):
-    """Return the sorted distinct device_ids assigned tag label=value (at least one)."""
+def tagged_device_ids(host, port, token, ca_file, label, value):
+    """Return the set of device_ids assigned tag label=value (exact, case-sensitive)."""
     key = tag.TagAssignmentKey(
         workspace_id="",  # merged (mainline) assignments
         element_type=tag.ElementType.DEVICE,
@@ -92,15 +98,38 @@ def find_tagged_device_ids(host, port, token, ca_file, label, value):
         )
     except Exception as exc:
         raise FetchError(f"tag lookup failed: {exc}") from exc
-    device_ids = sorted({a.key.device_id for a in assignments})
+    return {a.key.device_id for a in assignments}
+
+
+def find_tagged_device_ids(conn, selection):
+    """Return the sorted distinct device_ids selected by a parsed --tag (at least one).
+
+    Each KEY=VALUE term is one tag assignment query; "not" is taken against the
+    whole inventory, so "not role=spine" includes devices without a role tag."""
+    text, tree = selection
+    terms, universe = {}, []
+
+    def ids(node):
+        if node[0] == "tag":
+            if node not in terms:
+                terms[node] = tagged_device_ids(*conn, node[1], node[2])
+            return terms[node]
+        if node[0] == "not":
+            if not universe:
+                universe.append({d.key.device_id for d in list_inventory(*conn)})
+            return universe[0] - ids(node[1])
+        left, right = ids(node[1]), ids(node[2])
+        return left & right if node[0] == "and" else left | right
+
+    device_ids = sorted(ids(tree))
     if not device_ids:
-        raise FetchError(f"no device with tag {label}={value}")
+        raise FetchError(f"no device with tag {text}")
     return device_ids
 
 
-def find_tagged_device(host, port, token, ca_file, label, value, device_id):
+def find_tagged_device(host, port, token, ca_file, text, device_id):
     device_filter = inventory.Device(key=inventory.DeviceKey(device_id=device_id))
-    described = f"device_id {device_id!r} (tag {label}={value})"
+    described = f"device_id {device_id!r} (tag {text})"
     return find_device(host, port, token, ca_file, device_filter, described)
 
 
@@ -258,11 +287,79 @@ def checked_token(token, source):
     return token
 
 
-def parse_tag(text):
+TAG_OPERATORS = ("and", "or", "not")
+
+
+def parse_term(text):
     label, sep, value = text.partition("=")
     if not (sep and label and value):
         raise argparse.ArgumentTypeError(f"expected KEY=VALUE, got {text!r}")
-    return label, value
+    return ("tag", label, value)
+
+
+def parse_tag(text):
+    """Parse --tag into (text, tree); tree nodes are ("tag", KEY, VALUE),
+    ("not", x), ("and", x, y) and ("or", x, y).
+
+    Without an and/or/not word (separated by whitespace or parentheses), text is
+    one plain KEY=VALUE exactly as
+    before (the value may contain spaces or parentheses). Otherwise it is an
+    expression: not > and > or, with parentheses; terms are KEY=VALUE without
+    whitespace or parentheses, separated by whitespace or parentheses.
+    """
+    tokens = re.findall(r"[()]|[^\s()]+", text)  # parentheses separate words too
+    if not any(token in TAG_OPERATORS for token in tokens):
+        return text, parse_term(text)
+    pos = 0
+
+    def error(reason):
+        return argparse.ArgumentTypeError(f"bad tag expression {text!r}: {reason}")
+
+    def peek():
+        return tokens[pos] if pos < len(tokens) else None
+
+    def take():
+        nonlocal pos
+        pos += 1
+        return tokens[pos - 1]
+
+    def either():  # x or y or ...
+        node = both()
+        while peek() == "or":
+            take()
+            node = ("or", node, both())
+        return node
+
+    def both():  # x and y and ...
+        node = single()
+        while peek() == "and":
+            take()
+            node = ("and", node, single())
+        return node
+
+    def single():  # not x, (x), KEY=VALUE
+        if peek() is None:
+            raise error("it ends where a KEY=VALUE, 'not' or '(' is expected")
+        token = take()
+        if token == "not":
+            return ("not", single())
+        if token == "(":
+            node = either()
+            if peek() != ")":
+                raise error("missing ')'")
+            take()
+            return node
+        if token in ("and", "or", ")"):
+            raise error(f"unexpected {token!r}")
+        try:
+            return parse_term(token)
+        except argparse.ArgumentTypeError as exc:
+            raise error(exc) from None
+
+    tree = either()
+    if peek() is not None:
+        raise error(f"unexpected {peek()!r}")
+    return " ".join(text.split()), tree
 
 
 def parse_lab_name(text):
@@ -326,13 +423,11 @@ def run(args, base_dir=None):
     if by_hostname:
         device = find_device_by_hostname(*conn, args.hostname)
     else:
-        label, value = args.tag
-        device_ids = find_tagged_device_ids(*conn, label, value)
+        text = args.tag[0]
+        device_ids = find_tagged_device_ids(conn, args.tag)
         if len(device_ids) > 1:
-            raise FetchError(
-                f"{len(device_ids)} devices with tag {label}={value}: {', '.join(device_ids)}"
-            )
-        device = find_tagged_device(*conn, label, value, device_ids[0])
+            raise FetchError(f"{len(device_ids)} devices with tag {text}: {', '.join(device_ids)}")
+        device = find_tagged_device(*conn, text, device_ids[0])
     serial = device.key.device_id
     name = device.hostname or serial
     if not output:
@@ -420,7 +515,7 @@ def collect_tag(
     conn, server, ca_bytes, selected_tag, output_dir, report_lldp=False, lab=None, rules=None,
     verbose=False, force=False,
 ):
-    """Collect every device with the tag into output_dir, sequentially.
+    """Collect every device selected by the parsed --tag into output_dir, sequentially.
 
     Successes are kept; each failed device is reported and the rest continue.
     Returns True only if every device was collected (and, with lab, the topology
@@ -441,9 +536,10 @@ def collect_tag(
     fails)
     are not restored: there is no rollback. Other files are never looked at.
     """
-    label, value = selected_tag
+    text = selected_tag[0]
     token = conn[2]
-    device_ids = find_tagged_device_ids(*conn, label, value)
+    device_ids = find_tagged_device_ids(conn, selected_tag)
+    print(f"selected {len(device_ids)} device{'s' * (len(device_ids) != 1)} with tag {text}")
     collected_dir = os.path.join(output_dir, COLLECTED)
     os.makedirs(collected_dir, exist_ok=True)
     if rules:
@@ -459,7 +555,7 @@ def collect_tag(
     saved = {}  # name -> device, for configs written in this run
     for device_id in device_ids:
         try:
-            device = find_tagged_device(*conn, label, value, device_id)
+            device = find_tagged_device(*conn, text, device_id)
         except FetchError as exc:
             fail(device_id, exc)
             continue
@@ -490,7 +586,7 @@ def collect_tag(
                 fail(label_for_report, f"fixup failed, original kept: {exc}", fixup_failures)
 
     print(
-        f"collected {written} of {len(device_ids)} devices with tag {label}={value} "
+        f"collected {written} of {len(device_ids)} devices with tag {text} "
         f"into {collected_dir}; {len(failures)} failed"
     )
     if rules:
@@ -631,7 +727,15 @@ def build_parser(prog=None):
     selector.add_argument(
         "--hostname", help="device hostname as shown in CloudVision inventory (any case)"
     )
-    selector.add_argument("--tag", type=parse_tag, metavar="KEY=VALUE", help="device tag; must match exactly one device unless --output-dir is given")
+    selector.add_argument(
+        "--tag",
+        type=parse_tag,
+        metavar="EXPR",
+        help="device tag KEY=VALUE (exact, case-sensitive), or an expression of such terms "
+        "with not, and, or (in that precedence) and parentheses, e.g. "
+        "'(site=lab or site=dr) and not role=spine'; 'not' covers devices without the tag. "
+        "Must match exactly one device unless --output-dir is given",
+    )
     parser.add_argument("--ca-file", help="PEM CA bundle for on-prem CVP with a private CA")
     add_token_file_argument(parser)
     outputs = parser.add_mutually_exclusive_group()

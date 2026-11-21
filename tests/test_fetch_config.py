@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import os
 import re
@@ -17,7 +18,8 @@ TOKEN = "secret-token-value"
 @pytest.fixture
 def cv(monkeypatch, tmp_path):
     """Stub CloudVision: `serials`/`version`/`hostname` for inventory (`hostnames`,
-    `versions` override per serial), `tagged` device_ids for tag assignments,
+    `versions` override per serial), `tagged` device_ids for tag assignments (or
+    `tags` {serial: {label: value}} to answer each label=value query exactly),
     `result` for get_config (`results` override per serial), `lldp` notifications
     per serial for the Connector (an Exception value is raised)."""
     state = {
@@ -31,6 +33,7 @@ def cv(monkeypatch, tmp_path):
         "lldp": {},
         "connector": [],
         "tagged": [],
+        "tags": {},
         "tag_filters": [],
         "result": {"config": "", "errors": [], "filter_codes": [], "sources": []},
         "filters": [],
@@ -62,7 +65,9 @@ def cv(monkeypatch, tmp_path):
 
         async def get_all(self, request, timeout=None):
             state["tag_filters"].extend(request.partial_eq_filter)
-            for device_id in state["tagged"]:
+            key = request.partial_eq_filter[0].key
+            tagged = [s for s, tags in state["tags"].items() if tags.get(key.label) == key.value]
+            for device_id in tagged or state["tagged"]:
                 yield tag.TagAssignmentStreamResponse(
                     value=tag.TagAssignment(key=tag.TagAssignmentKey(device_id=device_id))
                 )
@@ -354,6 +359,7 @@ def test_tag_does_not_overwrite_default_output(cv, tmp_path):
         ("--hostname", "leaf1", "--output-dir", "lab"),
         ("--tag", "role=leaf", "--output", "x.cfg", "--output-dir", "lab"),
         ("--tag", "role=leaf", "--lldp"),
+        ("--tag", "site=lab and"),  # expressions are checked before any CloudVision call
         ("--tag", "s=l", "--output-dir", "c", "--lldp", "--image", "ceos:1"),  # needs --lab-name
         ("--tag", "s=l", "--output-dir", "c", "--lab-name", "lab1", "--image", "ceos:1"),
         ("--tag", "s=l", "--output-dir", "c", "--lldp", "--lab-name", "-lab", "--image", "ceos:1"),
@@ -370,6 +376,77 @@ def test_bad_selector_is_rejected(cv, tmp_path, selector):
 
     assert exc.value.code == 2
     assert list(tmp_path.iterdir()) == []
+
+
+TAGS = {  # SN4 has no role tag
+    "SN1": {"site": "lab", "role": "leaf"},
+    "SN2": {"site": "dr", "role": "leaf"},
+    "SN3": {"site": "lab", "role": "spine"},
+    "SN4": {"site": "lab"},
+}
+
+
+@pytest.mark.parametrize("expression, selected", [
+    ("role=leaf", ["SN1", "SN2"]),  # plain KEY=VALUE as before
+    ("site=lab and role=leaf", ["SN1"]),
+    ("role=leaf or role=spine", ["SN1", "SN2", "SN3"]),
+    ("not role=spine", ["SN1", "SN2", "SN4"]),  # includes SN4 without a role tag
+    ("site=lab and not role=spine", ["SN1", "SN4"]),
+    ("(site=lab or site=dr) and role=leaf", ["SN1", "SN2"]),
+    ("site=dr or site=lab and role=spine", ["SN2", "SN3"]),  # and binds tighter than or
+    ("not site=lab or role=spine", ["SN2", "SN3"]),  # not binds tighter than or
+    ("not (site=lab or role=leaf)", []),
+    ("(not role=spine)", ["SN1", "SN2", "SN4"]),  # operators found next to parentheses
+    ("(site=dr)or(role=spine)", ["SN2", "SN3"]),
+    ("Role=leaf or site=dr", ["SN2"]),  # keys and values are case-sensitive
+    ("role=leaf or site=lab", ["SN1", "SN2", "SN3", "SN4"]),  # each device once
+])
+def test_tag_expressions_select_sorted_distinct_devices(cv, expression, selected):
+    cv["serials"], cv["tags"] = list(TAGS), TAGS
+    conn = ("cv.example", 443, TOKEN, None)
+    selection = fetch_config.parse_tag(expression)
+
+    if selected:
+        assert fetch_config.find_tagged_device_ids(conn, selection) == selected
+    else:
+        with pytest.raises(fetch_config.FetchError, match=re.escape(f"no device with tag {expression}")):
+            fetch_config.find_tagged_device_ids(conn, selection)
+
+
+@pytest.mark.parametrize("expression, message", [
+    ("", "expected KEY=VALUE, got ''"),
+    ("site=lab and", "it ends where a KEY=VALUE, 'not' or '(' is expected"),
+    ("or site=lab", "unexpected 'or'"),
+    ("site=lab and or role=leaf", "unexpected 'or'"),
+    ("not", "it ends where"),
+    ("(site=lab or site=dr", "missing ')'"),
+    ("site=lab or site=dr)", "unexpected ')'"),
+    ("site=lab and role", "expected KEY=VALUE, got 'role'"),
+    ("site=lab and role=", "expected KEY=VALUE, got 'role='"),
+])
+def test_bad_tag_expressions_are_syntax_errors(expression, message):
+    with pytest.raises(argparse.ArgumentTypeError, match=re.escape(message)):
+        fetch_config.parse_tag(expression)
+
+
+def test_plain_tag_without_operator_words_is_unchanged():
+    assert fetch_config.parse_tag("site=New York (2)") == (
+        "site=New York (2)", ("tag", "site", "New York (2)"))
+    assert fetch_config.parse_tag("and=or")[1] == ("tag", "and", "or")  # operators only as words
+
+
+def test_tag_expression_collects_with_a_selected_count(cv, tmp_path, capsys):
+    cv["serials"], cv["tags"] = list(TAGS), TAGS
+    cv["hostnames"] = {"SN1": "leaf1", "SN2": "leaf2", "SN3": "spine1", "SN4": "border1"}
+    cv["result"]["config"] = "hostname x\n"
+
+    assert run(selector=("--tag", "site=lab and not role=spine", "--output-dir", "lab")) == 0
+
+    assert sorted(p.name for p in (tmp_path / "lab/configs/collected").iterdir()) == [
+        "border1.cfg", "leaf1.cfg"]
+    out = capsys.readouterr().out
+    assert "selected 2 devices with tag site=lab and not role=spine" in out
+    assert "collected 2 of 2 devices with tag site=lab and not role=spine" in out
 
 
 @pytest.fixture
