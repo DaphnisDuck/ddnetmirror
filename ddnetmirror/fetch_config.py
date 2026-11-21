@@ -301,14 +301,15 @@ def parse_tag(text):
     """Parse --tag into (text, tree); tree nodes are ("tag", KEY, VALUE),
     ("not", x), ("and", x, y) and ("or", x, y).
 
-    Without a standalone and/or/not word, text is one plain KEY=VALUE exactly as
+    Without an and/or/not word (separated by whitespace or parentheses), text is
+    one plain KEY=VALUE exactly as
     before (the value may contain spaces or parentheses). Otherwise it is an
     expression: not > and > or, with parentheses; terms are KEY=VALUE without
     whitespace or parentheses, separated by whitespace or parentheses.
     """
-    if not any(word in TAG_OPERATORS for word in text.split()):
+    tokens = re.findall(r"[()]|[^\s()]+", text)  # parentheses separate words too
+    if not any(token in TAG_OPERATORS for token in tokens):
         return text, parse_term(text)
-    tokens = re.findall(r"[()]|[^\s()]+", text)
     pos = 0
 
     def error(reason):

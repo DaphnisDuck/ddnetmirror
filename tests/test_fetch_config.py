@@ -396,6 +396,8 @@ TAGS = {  # SN4 has no role tag
     ("site=dr or site=lab and role=spine", ["SN2", "SN3"]),  # and binds tighter than or
     ("not site=lab or role=spine", ["SN2", "SN3"]),  # not binds tighter than or
     ("not (site=lab or role=leaf)", []),
+    ("(not role=spine)", ["SN1", "SN2", "SN4"]),  # operators found next to parentheses
+    ("(site=dr)or(role=spine)", ["SN2", "SN3"]),
     ("Role=leaf or site=dr", ["SN2"]),  # keys and values are case-sensitive
     ("role=leaf or site=lab", ["SN1", "SN2", "SN3", "SN4"]),  # each device once
 ])
