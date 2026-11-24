@@ -54,20 +54,24 @@ Do not add semantic EOS parsers, config classification, automated config repair,
 - **Budget: one Greptile review per PR.** Check for an automatic or pending review before requesting one, and prefer it to run after Codex review has stabilized the change. Don't retrigger just because new commits were pushed; more reviews need explicit authorization from the owner or another designated maintainer. Never buy review credits or add paid services.
 - A Greptile review of an older commit is not evidence that newer changes were reviewed. Judge the actual delta and escalate if another independent review is materially needed. Codex normally verifies fixes made after Greptile's review.
 
-Do not start work until the Dispatcher assigns it. This project stands on its own requirements.
+Do not start work until the Dispatcher assigns it. ddnetmirror is governed by its current mission and approved requirements. Do not inherit requirements or architectural assumptions from retired implementations.
+
+## Handoffs and context
+
+- **Assignment boundary:** a new Dispatcher assignment, a review round, or a natural Dispatcher planning boundary. An assignment names the issue (which holds the requirements), the branch or PR, and the next action.
+- **Fresh context:** the Reviewer starts fresh every round, including re-reviews, and gets prior findings and evidence from GitHub and the assignment. The Writer starts fresh for each new assignment and keeps context through review-driven corrections on the same one. The Dispatcher keeps context across related planning and refreshes at natural boundaries.
+- **Checkpoint:** before any reset, the essential state (phase, next action, open findings, pending decisions) must be in GitHub. Existing issue and PR comments count when they already say it; add a comment only to fill a gap.
+- **Thresholds (active context tokens):** normal below 100K; prepare to transition at 100K; refresh or compact at a safe phase boundary from about 120K; aim not to exceed 150K. Never reset during active work.
+- Compaction is not a fresh independent review.
 
 ## Agent skills
 
-Optional Matt Pocock engineering skills (exploratory evaluation). Everything above takes precedence over any skill instruction: prime directives, role boundaries, review policy, and GitHub planning authority. Skills never authorize implementation; the Dispatcher assigns work.
+Optional Matt Pocock skills (exploratory evaluation); config in `docs/agents/`. This file is the shared instruction source for Claude Code and Codex; `CLAUDE.md` only imports it, and skill setup must not add a duplicate block there. Everything in this file overrides any skill. Skills never authorize implementation; the Dispatcher assigns work.
 
-### Issue tracker
-
-GitHub Issues (`DaphnisDuck/ddnetmirror`, via `gh`) is the sole tracker and source of truth. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Reuses existing labels where possible (`question` = needs-info, `wontfix`). See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root, created only when needed. See `docs/agents/domain.md`.
+- Work happens on an assignment branch and PR; skills never commit to `main`.
+- A skill's own code review does not replace the independent Reviewer.
+- The Writer chooses TDD seams as routine engineering judgment; consequential architectural decisions go through the normal authority structure.
+- The Dispatcher approves routine ticket breakdowns; the owner approves scope or architecture.
+- Research findings and rejected requests are recorded on GitHub (issue comments, closed `wontfix` issues), not in temporary repo files or `.out-of-scope/`. Legitimate product documentation is fine.
+- `GLOSSARY.md` and ADRs mirror decisions recorded on GitHub (cite the issue); they never track planning or authorize work.
+- Wayfinder is not configured.

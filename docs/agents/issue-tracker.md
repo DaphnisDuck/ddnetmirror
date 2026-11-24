@@ -18,7 +18,6 @@ GitHub Issues for `DaphnisDuck/ddnetmirror` is the sole tracker and the source o
 
 - Issues are created through Dispatcher-approved workflows or explicitly owner-authorized skill sessions.
 - Creating an issue or applying `ready-for-agent` is not implementation authorization. The Dispatcher retains assignment authority.
-- No Markdown backlogs or local issue files. Record decisions and progress in issue comments and PRs.
 
 **PRs as a request surface: no.**
 
