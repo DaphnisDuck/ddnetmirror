@@ -55,3 +55,19 @@ Do not add semantic EOS parsers, config classification, automated config repair,
 - A Greptile review of an older commit is not evidence that newer changes were reviewed. Judge the actual delta and escalate if another independent review is materially needed. Codex normally verifies fixes made after Greptile's review.
 
 Do not start work until the Dispatcher assigns it. This project stands on its own requirements.
+
+## Agent skills
+
+Optional Matt Pocock engineering skills (exploratory evaluation). Everything above takes precedence over any skill instruction: prime directives, role boundaries, review policy, and GitHub planning authority. Skills never authorize implementation; the Dispatcher assigns work.
+
+### Issue tracker
+
+GitHub Issues (`DaphnisDuck/ddnetmirror`, via `gh`) is the sole tracker and source of truth. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Reuses existing labels where possible (`question` = needs-info, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root, created only when needed. See `docs/agents/domain.md`.
