@@ -13,4 +13,4 @@ Use glossary terms as defined. If your output contradicts an ADR, say so explici
 
 ## Authority
 
-Glossary and ADRs may record established domain knowledge and approved architectural decisions, including decisions not yet implemented. They are never a planning tracker, backlog, or authorization to implement. GitHub Issues remain authoritative for planning, and `AGENTS.md` takes precedence.
+Glossary and ADRs may record established domain knowledge and approved architectural decisions, including decisions not yet implemented. They mirror decisions recorded on GitHub (cite the issue) and are never a planning tracker, backlog, or authorization to implement. `AGENTS.md` takes precedence.

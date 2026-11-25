@@ -9,5 +9,3 @@ Maps the skills' five triage roles to this repo's GitHub labels.
 | `ready-for-agent` | `ready-for-agent`  | Specified; eligible for Dispatcher assignment |
 | `ready-for-human` | `ready-for-human`  | Requires human implementation             |
 | `wontfix`         | `wontfix`          | Will not be actioned                      |
-
-`ready-for-agent` is not authorization to start work. The Dispatcher assigns work (see `AGENTS.md`).
