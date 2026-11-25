@@ -20,6 +20,10 @@
 
 `ddn fetch --server {{www.arista.io}} --tag '{{(site=lab or site=dr) and not role=spine}}' --output-dir {{lab1}} --lldp`
 
+- Preview a tag selection with some devices left out by hostname (any case):
+
+`ddn fetch --server {{www.arista.io}} --tag {{site=lab}} --exclude-host {{leaf3}} --exclude-host {{leaf4}} --list`
+
 - Write a topology, picking a local `ceos` image per device by EOS version (the default without `--image`):
 
 `ddn fetch --server {{www.arista.io}} --tag {{site=lab}} --output-dir {{lab1}} --lldp --lab-name {{lab1}}`

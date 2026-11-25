@@ -401,6 +401,9 @@ TAGS = {  # SN4 has no role tag
     ("(site=dr)or(role=spine)", ["SN2", "SN3"]),
     ("Role=leaf or site=dr", ["SN2"]),  # keys and values are case-sensitive
     ("role=leaf or site=lab", ["SN1", "SN2", "SN3", "SN4"]),  # each device once
+    ("site=lab AND NOT role=spine", ["SN1", "SN4"]),  # operators in any case
+    ("(site=lab Or site=dr) aNd role=leaf", ["SN1", "SN2"]),
+    ("Role=leaf OR site=dr", ["SN2"]),
 ])
 def test_tag_expressions_select_sorted_distinct_devices(cv, expression, selected):
     cv["serials"], cv["tags"] = list(TAGS), TAGS
@@ -424,6 +427,8 @@ def test_tag_expressions_select_sorted_distinct_devices(cv, expression, selected
     ("site=lab or site=dr)", "unexpected ')'"),
     ("site=lab and role", "expected KEY=VALUE, got 'role'"),
     ("site=lab and role=", "expected KEY=VALUE, got 'role='"),
+    ("site=lab AND", "it ends where"),
+    ("OR site=lab", "unexpected 'or'"),
 ])
 def test_bad_tag_expressions_are_syntax_errors(expression, message):
     with pytest.raises(argparse.ArgumentTypeError, match=re.escape(message)):
@@ -434,6 +439,20 @@ def test_plain_tag_without_operator_words_is_unchanged():
     assert fetch_config.parse_tag("site=New York (2)") == (
         "site=New York (2)", ("tag", "site", "New York (2)"))
     assert fetch_config.parse_tag("and=or")[1] == ("tag", "and", "or")  # operators only as words
+
+
+@pytest.mark.parametrize("expression", [
+    "(site=lab OR site=dr) AND NOT role=spine",
+    "(site=lab Or site=dr) aNd nOt role=spine",
+])
+def test_operator_case_gives_the_same_tree_and_keeps_term_case(expression):
+    lowercase = fetch_config.parse_tag("(site=lab or site=dr) and not role=spine")[1]
+    assert fetch_config.parse_tag(expression) == (expression, lowercase)
+    assert fetch_config.parse_tag("AND=OR")[1] == ("tag", "AND", "OR")  # terms keep their case
+    assert fetch_config.parse_tag("role=OR or site=Not")[1] == (
+        "or", ("tag", "role", "OR"), ("tag", "site", "Not"))
+    args = fetch_config.build_parser().parse_args(["--server=cv", "--list", f"--tag={expression}"])
+    assert args.tag[1] == lowercase
 
 
 def test_tag_expression_collects_with_a_selected_count(cv, tmp_path, capsys):
@@ -489,6 +508,18 @@ def test_batch_keeps_successes_when_one_device_fails(batch, tmp_path, capsys):
     out = capsys.readouterr()
     assert "leaf2 (SN2)" in out.err and "unavailable" in out.err
     assert "collected 2 of 3" in out.out and "1 failed" in out.out
+
+
+def test_batch_diagnostics_escape_control_characters(batch, tmp_path, capsys):
+    batch["tagged"] = ["SN1", "SN\x1b[2J9"]  # SN\x1b[2J9: tagged, but missing from inventory
+    batch["hostnames"]["SN1"] = "leaf\x1b1"
+
+    assert run_batch() == 1
+
+    out, err = capsys.readouterr()
+    assert "failed: SN\\x1b[2J9: " in err and "\x1b" not in err
+    assert "wrote running config for leaf\\x1b1 (SN1" in out and "\x1b" not in out
+    assert (tmp_path / "lab" / "configs" / "collected" / "leaf\x1b1.cfg").exists()  # name unchanged
 
 
 def test_batch_with_no_tagged_devices_fails(batch, tmp_path, capsys):
@@ -1386,3 +1417,60 @@ def test_list_reports_tagged_devices_missing_from_inventory(cv, capsys):
     assert captured.out == ""
     assert "failed: SN9: no device with device_id 'SN9'" in captured.err
     assert "selected 1 device with tag role=leaf" in captured.err
+
+
+def test_exclude_host_leaves_devices_out_of_preview_collection_lldp_and_topology(
+        batch, tmp_path, capsys):
+    batch["serials"].append("SN4")
+    batch["tagged"] = []
+    batch["tags"] = {"SN1": {"site": "lab"}, "SN2": {"site": "lab"}, "SN3": {"site": "lab"},
+                     "SN4": {"site": "lab", "role": "border"}}
+    batch["hostnames"]["SN4"] = "border1"
+    batch["lldp"] = {
+        "SN1": [port("Ethernet1"), port("Ethernet2"), nbr("Ethernet1", "spine1", "Ethernet49/1"),
+                nbr("Ethernet2", "leaf2", "Ethernet2")],
+        "SN2": [port("Ethernet2"), nbr("Ethernet2", "leaf1", "Ethernet2")],
+        "SN3": [port("Ethernet49/1"), nbr("Ethernet49/1", "leaf1", "Ethernet1")],
+    }
+    expression = "site=lab and not role=border"
+    exclude = ("--exclude-host", "LEAF2", "--exclude-host", "leaf9")
+
+    assert run("--list", *exclude, selector=("--tag", expression)) == 0
+    listed = capsys.readouterr()
+    assert listed.out.split() == ["leaf1", "SN1", "4.32.1F", "spine1", "SN3", "unknown"]
+    assert "excluded: leaf2 (SN2)" in listed.err
+    assert "warning: excluded host 'leaf9' matches no device selected by tag" in listed.err
+
+    assert run(*exclude, selector=("--tag", expression, "--output-dir", "lab", "--lldp",
+                                   "--lab-name", "lab1", "--image", "ceos:1")) == 0
+
+    assert sorted(batch["config_ids"]) == ["SN1", "SN3"]
+    text = (tmp_path / "lab" / "lab1.clab.yml").read_text()
+    assert "2 of 2 devices collected; 1 links." in text and "INCOMPLETE" not in text
+    assert "leaf2" not in text
+    assert "leaf1 Ethernet2 -> leaf2 Ethernet2: not in selection" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("exclude, message", [
+    (["leaf1", "Leaf2", "spine1"], "error: every device with tag site=lab is excluded"),
+    (["LEAF1"], "error: excluded host 'LEAF1' is ambiguous: 2 selected devices"),
+])
+def test_exclusions_that_empty_or_ambiguously_match_the_selection_fail(
+        batch, tmp_path, capsys, exclude, message):
+    batch["hostnames"]["SN2"] = "Leaf1" if exclude == ["LEAF1"] else "leaf2"
+    options = [option for host in exclude for option in ("--exclude-host", host)]
+
+    for extra in (("--list",), ("--output-dir", "lab")):
+        assert run(*extra, *options, selector=("--tag", "site=lab")) == 1
+        assert message in capsys.readouterr().err
+
+    assert batch["compliance_calls"] == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_exclude_host_requires_tag_selection(cv, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run("--exclude-host", "leaf1", selector=("--hostname", "leaf2"))
+
+    assert exc.value.code == 2
+    assert "--exclude-host requires --tag" in capsys.readouterr().err

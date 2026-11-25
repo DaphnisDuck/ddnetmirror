@@ -5,7 +5,7 @@ ddn up \- fetch, fix up, generate and deploy the lab described by ddnetmirror.ym
 .B ddn
 up [-h] [--token-file PATH]
 .SH DESCRIPTION
-Build and deploy the lab described by ./ddnetmirror.yml: refuse if the lab already has containers, collect configs and LLDP from CloudVision, apply fixup rules, regenerate the project's files (as ddn fetch \-\-force), and only if that completed, run 'containerlab deploy' (through sudo unless containerlab runs as you). ddnetmirror.yml keys: server, name, tag (KEY=VALUE or an expression, as for ddn fetch \-\-tag); optional cacert, fixup\-rules (a path or none), image. The token is read as for ddn fetch: \-\-token\-file, else CLOUDVISION_TOKEN, else the default token file.
+Build and deploy the lab described by ./ddnetmirror.yml: refuse if the lab already has containers, collect configs and LLDP from CloudVision, apply fixup rules, regenerate the project's files (as ddn fetch \-\-force), and only if that completed, run 'containerlab deploy' (through sudo unless containerlab runs as you). ddnetmirror.yml keys: server, name, tag (KEY=VALUE or an expression, as for ddn fetch \-\-tag); optional cacert, fixup\-rules (a path or none), image, exclude\-hosts (a list of hostnames, as for ddn fetch \-\-exclude\-host). The token is read as for ddn fetch: \-\-token\-file, else CLOUDVISION_TOKEN, else the default token file.
 
 .SH OPTIONS
 .TP

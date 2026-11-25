@@ -102,8 +102,11 @@ def test_values_starting_with_a_dash_stay_values():
         "-cv", ("tag", "-site", "lab"), "-rules.yml", "-ceos:1", "-ca.pem")
 
 
-def test_project_tag_may_be_an_expression_passed_to_fetch_unchanged(lab, tmp_path):
-    expression = "(site=lab or site=dr) and not role=spine"
+@pytest.mark.parametrize("expression", [
+    "(site=lab or site=dr) and not role=spine",
+    "(site=lab OR site=dr) And NOT role=spine",
+])
+def test_project_tag_may_be_an_expression_passed_to_fetch_unchanged(lab, tmp_path, expression):
     (tmp_path / "ddnetmirror.yml").write_text(f"server: cv\nname: lab1\ntag: {expression}\n")
 
     assert up.main([]) == 0
@@ -111,6 +114,16 @@ def test_project_tag_may_be_an_expression_passed_to_fetch_unchanged(lab, tmp_pat
     argv = lab["fetch"][0][0]
     assert f"--tag={expression}" in argv
     assert fetch_config.build_parser().parse_args(argv).tag == fetch_config.parse_tag(expression)
+
+
+def test_exclude_hosts_become_exclude_host_options(lab, tmp_path):
+    (tmp_path / "ddnetmirror.yml").write_text(PROJECT + "exclude-hosts:\n  - leaf3\n  - -leaf4\n")
+
+    assert up.main([]) == 0
+
+    argv = lab["fetch"][0][0]
+    assert argv[-2:] == ["--exclude-host=leaf3", "--exclude-host=-leaf4"]
+    assert fetch_config.build_parser().parse_args(argv).exclude_host == ["leaf3", "-leaf4"]
 
 
 def test_containerlab_that_cannot_be_started_is_a_clear_error(lab, monkeypatch, capsys):
@@ -165,6 +178,7 @@ def test_containerlab_runs_without_sudo_as_root(lab, monkeypatch):
     ("server: cv\nname: -lab\ntag: site=lab\n", "is not a valid Containerlab lab name"),
     ("server: 443\nname: lab1\ntag: site=lab\n", "server must be a non-empty string"),
     (PROJECT + "image: auto\n", "leave image out"),
+    (PROJECT + "exclude-hosts: leaf3\n", "exclude-hosts must be a list of hostnames"),
     ("- server: cv\n", "must be a mapping"),
     (None, "no ./ddnetmirror.yml: run ddn in a lab project directory"),
 ])

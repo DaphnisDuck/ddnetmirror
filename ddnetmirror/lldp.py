@@ -58,15 +58,15 @@ def find_links(hostnames, lldp):
     skipped as human-readable reasons.
     """
     ambiguous = {h for h in hostnames if hostnames.count(h) > 1}
-    skipped = [f"{h}: hostname shared by several selected devices" for h in sorted(ambiguous)]
+    skipped = [f"{shown(h)}: hostname shared by several selected devices" for h in sorted(ambiguous)]
     observed = set()  # ((host, intf), (host, intf)) as seen from the first endpoint
     for host, data in sorted(lldp.items()):
         if data is None:
-            skipped.append(f"{host}: LLDP data unavailable")
+            skipped.append(f"{shown(host)}: LLDP data unavailable")
             continue
         _, neighbors = data
         for (port, _), fields in sorted(neighbors.items(), key=lambda kv: str(kv[0])):
-            where = f"{host} {shown(port)}"
+            where = f"{shown(host)} {shown(port)}"
             remote = remote_endpoint(fields)
             if not isinstance(port, str) or not port or remote is None:
                 skipped.append(f"{where}: neighbor without sysName/port id")
@@ -93,7 +93,8 @@ def find_links(hostnames, lldp):
     for a, b in sorted(pairs):
         if use[a] > 1 or use[b] > 1:
             skipped.append(
-                f"{a[0]} {shown(a[1])} <-> {b[0]} {shown(b[1])}: interface seen in several links"
+                f"{shown(a[0])} {shown(a[1])} <-> {shown(b[0])} {shown(b[1])}: "
+                "interface seen in several links"
             )
             continue
         kind = "reciprocal" if (a, b) in observed and (b, a) in observed else "one-sided"
@@ -117,7 +118,8 @@ def report_links(grpc_addr, token, ca_file, devices):
             try:
                 lldp[host] = read_lldp(client, serial)
             except Exception as exc:
-                print(f"LLDP query failed for {host} ({serial}): {exc}", file=sys.stderr)
+                print(f"LLDP query failed for {shown(host)} ({shown(serial)}): {shown(exc)}",
+                      file=sys.stderr)
                 lldp[host] = None
     links, skipped = find_links(hostnames, lldp)
     print(f"LLDP links between selected devices: {len(links)}")
