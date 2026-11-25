@@ -147,12 +147,11 @@ def main(argv=None, prog=None):
     except ProjectError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    deploy, inspect, destroy = (" ".join(clab + [action, "-t", topology])
-                                for action in ("deploy", "inspect", "destroy"))
+    deploy, inspect = (" ".join(clab + [action, "-t", topology]) for action in ("deploy", "inspect"))
     if existing:
         print(f"error: lab {name!r} already has containers ({', '.join(existing)}); not "
               f"regenerating or deploying. Remove it first if you mean to: "
-              f"{destroy}", file=sys.stderr)
+              "ddn down", file=sys.stderr)
         return 1
 
     try:
@@ -172,12 +171,12 @@ def main(argv=None, prog=None):
         code = 130
     except OSError as exc:  # sudo or containerlab could not be started
         print(f"error: could not run {clab[0]}: {exc.strerror or exc}; nothing was deployed "
-              f"or torn down. Check with: {inspect}; remove a partial lab with: {destroy}",
+              f"or torn down. Check with: {inspect}; remove a partial lab with: ddn down",
               file=sys.stderr)
         return 1
     if code != 0:
         print(f"error: containerlab deploy failed (exit {code}); nothing was torn down. "
-              f"Inspect: {inspect}; remove: {destroy}",
+              f"Inspect: {inspect}; remove: ddn down",
               file=sys.stderr)
     return code
 
@@ -210,7 +209,9 @@ def build_down_parser(prog=None):
         description=f"Destroy the lab described by ./{PROJECT_FILE}: run 'containerlab destroy "
         "-t ./NAME.clab.yml --cleanup' (through sudo unless containerlab runs as you) and exit "
         "with its status. Refuses unless NAME.clab.yml is a regular file for lab NAME. "
-        f"{PROJECT_FILE}, the topology and the configs are kept; no CloudVision access.",
+        "--cleanup also deletes Containerlab's clab-NAME directory, including files saved "
+        f"inside the running lab (e.g. by write memory); {PROJECT_FILE}, the topology and "
+        "the collected and startup configs are kept. No CloudVision access.",
     )
 
 

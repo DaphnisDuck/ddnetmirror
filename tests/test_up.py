@@ -127,7 +127,7 @@ def test_containerlab_that_cannot_be_started_is_a_clear_error(lab, monkeypatch, 
 
     err = capsys.readouterr().err
     assert "could not run sudo: No such file or directory; nothing was deployed or torn down" in err
-    assert f"remove a partial lab with: sudo {lab['exe']} destroy -t ./lab1.clab.yml" in err
+    assert "remove a partial lab with: ddn down" in err
 
 
 def test_containerlab_binary_missing_at_launch_uses_the_resolved_command(lab, monkeypatch, capsys):
@@ -146,7 +146,7 @@ def test_containerlab_binary_missing_at_launch_uses_the_resolved_command(lab, mo
 
     err = capsys.readouterr().err
     assert f"Check with: sudo {lab['exe']} inspect -t ./lab1.clab.yml" in err
-    assert f"remove a partial lab with: sudo {lab['exe']} destroy -t ./lab1.clab.yml" in err
+    assert "remove a partial lab with: ddn down" in err
 
 
 def test_containerlab_runs_without_sudo_as_root(lab, monkeypatch):
@@ -204,7 +204,7 @@ def test_existing_lab_is_refused_without_touching_files(lab, tmp_path, capsys):
     err = capsys.readouterr().err
     assert ("lab 'lab1' already has containers (clab-lab1-leaf1, clab-lab1-leaf2); "
             "not regenerating or deploying") in err
-    assert f"sudo {lab['exe']} destroy -t ./lab1.clab.yml" in err
+    assert "Remove it first if you mean to: ddn down" in err
 
 
 def test_failed_docker_check_is_a_refusal(lab, capsys):
@@ -236,7 +236,7 @@ def test_containerlab_exit_status_is_returned_and_nothing_is_torn_down(lab, caps
     assert [command[1:3] for command, _ in lab["runs"][1:]] == [[lab["exe"], "deploy"]]
     err = capsys.readouterr().err
     assert "containerlab deploy failed (exit 3); nothing was torn down" in err
-    assert f"remove: sudo {lab['exe']} destroy -t ./lab1.clab.yml" in err
+    assert "remove: ddn down" in err
 
 
 def write_topology(tmp_path, name="lab1"):
