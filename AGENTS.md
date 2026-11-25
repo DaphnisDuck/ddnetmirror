@@ -56,6 +56,11 @@ Do not add semantic EOS parsers, config classification, automated config repair,
 
 Do not start work until the Dispatcher assigns it. ddnetmirror is governed by its current mission and approved requirements. Do not inherit requirements or architectural assumptions from retired implementations.
 
+## Merging and supervision
+
+- **Merges require explicit owner approval.** Before merging, confirm required checks pass and merge with `gh pr merge --match-head-commit <reviewed-sha>` so only the reviewed head can land.
+- **Inspect before resending.** After a failed or timed-out wait, inspect the agent, pane and process state before resending an assignment or restarting work; a prompt that may have been delivered is never blindly resent.
+
 ## Handoffs and context
 
 - **Assignment boundary:** a new Dispatcher assignment, a review round, or a natural Dispatcher planning boundary. An assignment names the issue (which holds the requirements), the branch or PR, and the next action.
