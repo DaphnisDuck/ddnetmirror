@@ -3,7 +3,7 @@
 import json
 import re
 
-from ddnetmirror.lldp import shown
+from ddnetmirror.output import shown
 
 # Containerlab requires the container name clab-<lab>-<node> to match
 # ^[a-zA-Z0-9][a-zA-Z0-9-._]+$ (nodes/default_node.go). Lab and node names are
