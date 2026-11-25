@@ -10,6 +10,8 @@ import sys
 from cloudvision.Connector.codec import Wildcard
 from cloudvision.Connector.grpc_client import GRPCClient, create_query
 
+from ddnetmirror.output import shown
+
 PORT_STATUS = ["Sysdb", "l2discovery", "lldp", "status", "local", Wildcard(), "portStatus", Wildcard()]
 REMOTE_SYSTEM = PORT_STATUS + ["remoteSystem", Wildcard()]
 
@@ -45,14 +47,6 @@ def remote_endpoint(fields):
     if isinstance(name, str) and name and isinstance(port, str) and port:
         return name, port
     return None
-
-
-def shown(value):
-    """Escape control characters (C0, DEL, C1) in an LLDP value for display."""
-    return "".join(
-        f"\\x{ord(c):02x}" if ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F else c
-        for c in str(value)
-    )
 
 
 def find_links(hostnames, lldp):

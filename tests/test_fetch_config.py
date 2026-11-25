@@ -11,6 +11,7 @@ from cloudvision.api.arista.inventory import v1 as inventory
 from cloudvision.api.arista.tag import v2 as tag
 
 from ddnetmirror import cli, fetch_config, images, topology
+from ddnetmirror.output import FetchError
 
 TOKEN = "secret-token-value"
 
@@ -409,7 +410,7 @@ def test_tag_expressions_select_sorted_distinct_devices(cv, expression, selected
     if selected:
         assert fetch_config.find_tagged_device_ids(conn, selection) == selected
     else:
-        with pytest.raises(fetch_config.FetchError, match=re.escape(f"no device with tag {expression}")):
+        with pytest.raises(FetchError, match=re.escape(f"no device with tag {expression}")):
             fetch_config.find_tagged_device_ids(conn, selection)
 
 

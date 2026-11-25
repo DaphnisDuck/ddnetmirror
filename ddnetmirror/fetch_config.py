@@ -2,13 +2,11 @@
 
 import argparse
 import asyncio
-import contextlib
 import importlib.metadata
 import os
 import re
 import stat
 import sys
-import tempfile
 from datetime import datetime, timezone
 
 from cloudvision.api.arista.inventory import v1 as inventory
@@ -16,16 +14,13 @@ from cloudvision.api.arista.tag import v2 as tag
 from cloudvision.api.client import AsyncCVClient
 from cloudvision.compliance.client import ComplianceClient
 
-from ddnetmirror import images, lldp, topology
+from ddnetmirror import fixup, images, lldp, topology
+from ddnetmirror.output import FetchError, ensure_absent, shown, write_new_file
 
 TOKEN_ENV = "CLOUDVISION_TOKEN"
 # under --output-dir: collected configs always, fixed-up startup configs with fixup rules
 COLLECTED, STARTUP = "configs/collected", "configs/startup"
 RPC_TIMEOUT = 30
-
-
-class FetchError(Exception):
-    """A failure reported to the user as a one-line message."""
 
 
 async def _get_all(host, port, token, ca_file, stub_class, request):
@@ -141,71 +136,6 @@ def fetch_running_config(server, token, ca_bytes, serial):
     if not result["config"]:
         raise FetchError(f"empty running config returned for {serial}")
     return result["config"]
-
-
-def write_new_file(path, text, force=False):
-    """Write text as UTF-8 without any changes to a new owner-only file.
-
-    Refuses to overwrite. If writing or closing fails, removes the file it created.
-    With force, an existing regular file is replaced instead: the text goes to a
-    new owner-only temporary file in the same directory, which is then renamed
-    over path, so the previous file stays intact unless the rename succeeds.
-    """
-    data = text.encode("utf-8")
-    if force:
-        check_replaceable(path)
-        # fixed short name: a long destination name must not overflow NAME_MAX
-        fd, temp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".ddn-", suffix=".tmp")
-        write_fd(fd, data, temp, sync=True)
-        try:
-            os.replace(temp, path)
-        except BaseException:
-            with contextlib.suppress(OSError):
-                os.unlink(temp)
-            raise
-        return
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        raise FetchError(f"{path} already exists; not overwriting") from None
-    write_fd(fd, data, path)
-
-
-def write_fd(fd, data, path, sync=False):
-    """Write data to the new file fd and close it; on failure remove path."""
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            if sync:
-                f.flush()
-                os.fsync(f.fileno())
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(path)
-        raise
-
-
-def check_replaceable(path):
-    """Allow only a missing path or an existing regular file (never a symlink)."""
-    try:
-        mode = os.lstat(path).st_mode
-    except FileNotFoundError:
-        return
-    if stat.S_ISLNK(mode):
-        kind = "a symbolic link"
-    elif not stat.S_ISREG(mode):
-        kind = "not a regular file"
-    else:
-        return
-    raise FetchError(f"{path} is {kind}; not replacing it with --force "
-                     "(remove it, or use a new --output-dir)")
-
-
-def ensure_absent(path, force=False):
-    if force:
-        check_replaceable(path)
-    elif os.path.exists(path):
-        raise FetchError(f"{path} already exists; not overwriting")
 
 
 def check_safe_name(name, hint):
@@ -477,8 +407,6 @@ def resolve_fixup_rules(value, base_dir=None):
 
 def load_fixup_rules(path):
     """Read and validate a fixup rule file before anything is fetched or written."""
-    from ddnetmirror import fixup  # imported here: fixup imports this module
-
     try:
         with open(path, "rb") as f:
             return fixup.load_rules(f.read().decode("utf-8"))
@@ -491,8 +419,6 @@ def load_fixup_rules(path):
 def write_startup(rules, name, config, output, verbose=False, force=False):
     """Apply the fixup rules to a copy of config and write it as a new file.
     With verbose, print what each rule changed (never config text)."""
-    from ddnetmirror import fixup
-
     report = (lambda line: print(f"fixup {name}: {line}")) if verbose else (lambda _: None)
     write_new_file(output, fixup.apply_rules(rules, config, report=report, verbose=verbose), force)
     print(f"wrote startup config for {name} with fixups to {output}")
@@ -645,7 +571,7 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
     if bad:
         return refuse(
             "not valid Containerlab node names (inventory hostnames are used as-is): "
-            + ", ".join(lldp.shown(n) for n in bad)
+            + ", ".join(shown(n) for n in bad)
         )
     reserved = sorted(n for n in saved if topology.reserved_node_name(n))
     if reserved:

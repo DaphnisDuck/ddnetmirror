@@ -3,7 +3,8 @@ import os
 import pytest
 
 from ddnetmirror import fetch_config
-from ddnetmirror.fetch_config import FetchError, read_token
+from ddnetmirror.fetch_config import read_token
+from ddnetmirror.output import FetchError
 
 SECRET = "file-secret-token"
 

@@ -10,7 +10,7 @@ import sys
 
 import yaml
 
-from ddnetmirror.fetch_config import FetchError, write_new_file
+from ddnetmirror.output import FetchError, write_new_file
 
 # op -> (required fields, optional fields)
 OPS = {
