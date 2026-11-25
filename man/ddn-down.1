@@ -5,7 +5,7 @@ ddn down \- destroy the lab described by ddnetmirror.yml
 .B ddn
 down [-h]
 .SH DESCRIPTION
-Destroy the lab described by ./ddnetmirror.yml: run 'containerlab destroy \-t ./NAME.clab.yml \-\-cleanup' (through sudo unless containerlab runs as you) and exit with its status. Refuses unless NAME.clab.yml is a regular file for lab NAME. ddnetmirror.yml, the topology and the configs are kept; no CloudVision access.
+Destroy the lab described by ./ddnetmirror.yml: run 'containerlab destroy \-t ./NAME.clab.yml \-\-cleanup' (through sudo unless containerlab runs as you) and exit with its status. Refuses unless NAME.clab.yml is a regular file for lab NAME. \-\-cleanup also deletes Containerlab's clab\-NAME directory, including files saved inside the running lab (e.g. by write memory); ddnetmirror.yml, the topology and the collected and startup configs are kept. No CloudVision access.
 
 .SH DISTRIBUTION
 The latest version of ddnetmirror may be downloaded from
