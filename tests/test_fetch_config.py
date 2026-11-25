@@ -491,6 +491,15 @@ def test_batch_keeps_successes_when_one_device_fails(batch, tmp_path, capsys):
     assert "collected 2 of 3" in out.out and "1 failed" in out.out
 
 
+def test_batch_failure_line_escapes_control_characters(batch, capsys):
+    batch["tagged"] = ["SN1", "SN\x1b[2J9"]  # tagged, but missing from inventory
+
+    assert run_batch() == 1
+
+    err = capsys.readouterr().err
+    assert "failed: SN\\x1b[2J9: " in err and "\x1b" not in err
+
+
 def test_batch_with_no_tagged_devices_fails(batch, tmp_path, capsys):
     batch["tagged"] = []
 
