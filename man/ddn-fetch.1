@@ -1,9 +1,9 @@
-.TH DDN-FETCH "1" "2026\-11\-21" "ddnetmirror 0.0.1" "ddnetmirror manual"
+.TH DDN-FETCH "1" "2026\-11\-24" "ddnetmirror 0.0.1" "ddnetmirror manual"
 .SH NAME
 ddn fetch \- fetch running configs, LLDP links and a Containerlab topology from CloudVision
 .SH SYNOPSIS
 .B ddn
-fetch [-h] --server SERVER (--hostname HOSTNAME | --tag EXPR) [--ca-file CA_FILE] [--token-file PATH] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml] [--verbose] [--force]
+fetch [-h] --server SERVER (--hostname HOSTNAME | --tag EXPR) [--list] [--ca-file CA_FILE] [--token-file PATH] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml] [--verbose] [--force]
 .SH DESCRIPTION
 Fetch running configs from CloudVision and save them unchanged. The service\-account token is read from \-\-token\-file, else from CLOUDVISION_TOKEN, else from $XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token).
 
@@ -22,6 +22,12 @@ device tag KEY=VALUE (exact, case\-sensitive), or an expression of such terms
 with not, and, or (in that precedence) and parentheses, e.g. '(site=lab or
 site=dr) and not role=spine'; 'not' covers devices without the tag. Must match
 exactly one device unless \-\-output\-dir is given
+
+.TP
+\fB\-\-list\fR
+print the devices \-\-hostname or \-\-tag selects (hostname, serial, EOS version)
+and stop: no configs are fetched and no files are written. \-\-tag may match
+many devices
 
 .TP
 \fB\-\-ca\-file\fR \fI\,CA_FILE\/\fR
