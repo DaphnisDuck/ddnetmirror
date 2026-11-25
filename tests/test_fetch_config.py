@@ -1417,3 +1417,60 @@ def test_list_reports_tagged_devices_missing_from_inventory(cv, capsys):
     assert captured.out == ""
     assert "failed: SN9: no device with device_id 'SN9'" in captured.err
     assert "selected 1 device with tag role=leaf" in captured.err
+
+
+def test_exclude_host_leaves_devices_out_of_preview_collection_lldp_and_topology(
+        batch, tmp_path, capsys):
+    batch["serials"].append("SN4")
+    batch["tagged"] = []
+    batch["tags"] = {"SN1": {"site": "lab"}, "SN2": {"site": "lab"}, "SN3": {"site": "lab"},
+                     "SN4": {"site": "lab", "role": "border"}}
+    batch["hostnames"]["SN4"] = "border1"
+    batch["lldp"] = {
+        "SN1": [port("Ethernet1"), port("Ethernet2"), nbr("Ethernet1", "spine1", "Ethernet49/1"),
+                nbr("Ethernet2", "leaf2", "Ethernet2")],
+        "SN2": [port("Ethernet2"), nbr("Ethernet2", "leaf1", "Ethernet2")],
+        "SN3": [port("Ethernet49/1"), nbr("Ethernet49/1", "leaf1", "Ethernet1")],
+    }
+    expression = "site=lab and not role=border"
+    exclude = ("--exclude-host", "LEAF2", "--exclude-host", "leaf9")
+
+    assert run("--list", *exclude, selector=("--tag", expression)) == 0
+    listed = capsys.readouterr()
+    assert listed.out.split() == ["leaf1", "SN1", "4.32.1F", "spine1", "SN3", "unknown"]
+    assert "excluded: leaf2 (SN2)" in listed.err
+    assert "warning: excluded host 'leaf9' matches no device selected by tag" in listed.err
+
+    assert run(*exclude, selector=("--tag", expression, "--output-dir", "lab", "--lldp",
+                                   "--lab-name", "lab1", "--image", "ceos:1")) == 0
+
+    assert sorted(batch["config_ids"]) == ["SN1", "SN3"]
+    text = (tmp_path / "lab" / "lab1.clab.yml").read_text()
+    assert "2 of 2 devices collected; 1 links." in text and "INCOMPLETE" not in text
+    assert "leaf2" not in text
+    assert "leaf1 Ethernet2 -> leaf2 Ethernet2: not in selection" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("exclude, message", [
+    (["leaf1", "Leaf2", "spine1"], "error: every device with tag site=lab is excluded"),
+    (["LEAF1"], "error: excluded host 'LEAF1' is ambiguous: 2 selected devices"),
+])
+def test_exclusions_that_empty_or_ambiguously_match_the_selection_fail(
+        batch, tmp_path, capsys, exclude, message):
+    batch["hostnames"]["SN2"] = "Leaf1" if exclude == ["LEAF1"] else "leaf2"
+    options = [option for host in exclude for option in ("--exclude-host", host)]
+
+    for extra in (("--list",), ("--output-dir", "lab")):
+        assert run(*extra, *options, selector=("--tag", "site=lab")) == 1
+        assert message in capsys.readouterr().err
+
+    assert batch["compliance_calls"] == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_exclude_host_requires_tag_selection(cv, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run("--exclude-host", "leaf1", selector=("--hostname", "leaf2"))
+
+    assert exc.value.code == 2
+    assert "--exclude-host requires --tag" in capsys.readouterr().err
