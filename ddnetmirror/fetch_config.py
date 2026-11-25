@@ -340,6 +340,9 @@ def run(args, base_dir=None):
     conn = (host, port, token, args.ca_file)
     server = f"{host}:{port}"
 
+    if args.list:
+        return list_selection(conn, args.hostname, args.tag)
+
     if args.output_dir:
         lab = None
         if args.lab_name:
@@ -366,6 +369,35 @@ def run(args, base_dir=None):
         ensure_absent(output)
     fetch_and_write(server, token, ca_bytes, device, name, output)
     return True
+
+
+def list_selection(conn, hostname, selected_tag):
+    """Print the devices a selection picks, as collection selects them; fetch and write nothing.
+
+    Rows (hostname, serial, EOS version; sorted, aligned) go to stdout, the summary
+    to stderr. Returns True if every selected device was found in inventory."""
+    if selected_tag is None:
+        devices = [find_device_by_hostname(*conn, hostname)]
+        count, described = 1, f"hostname {hostname}"
+    else:
+        text = selected_tag[0]
+        device_ids = find_tagged_device_ids(conn, selected_tag)
+        count, described = len(device_ids), f"tag {text}"
+        devices = []
+        for device_id in device_ids:
+            try:
+                devices.append(find_tagged_device(*conn, text, device_id))
+            except FetchError as exc:  # as in collection: report it, list the rest
+                print(f"failed: {device_id}: {exc}", file=sys.stderr)
+    print(f"selected {count} device{'s' * (count != 1)} with {described}", file=sys.stderr)
+    rows = sorted(
+        (shown(d.hostname or "-"), shown(d.key.device_id), shown(d.software_version or "unknown"))
+        for d in devices
+    )
+    widths = [max((len(row[i]) for row in rows), default=0) for i in range(2)]
+    for name, serial, version in rows:
+        print(f"{name:<{widths[0]}}  {serial:<{widths[1]}}  {version}")
+    return len(devices) == count  # False if a selected device is missing from inventory
 
 
 NO_FIXUPS = "none"  # --fixup-rules none: no fixups, not even the user default
@@ -660,7 +692,13 @@ def build_parser(prog=None):
         help="device tag KEY=VALUE (exact, case-sensitive), or an expression of such terms "
         "with not, and, or (in that precedence) and parentheses, e.g. "
         "'(site=lab or site=dr) and not role=spine'; 'not' covers devices without the tag. "
-        "Must match exactly one device unless --output-dir is given",
+        "Must match exactly one device unless --output-dir or --list is given",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="print the devices --hostname or --tag selects (hostname, serial, EOS version) "
+        "and stop: no configs are fetched and no files are written. --tag may match many devices",
     )
     parser.add_argument("--ca-file", help="PEM CA bundle for on-prem CVP with a private CA")
     add_token_file_argument(parser)
@@ -711,9 +749,20 @@ def build_parser(prog=None):
     return parser
 
 
+LIST_EXCLUDES = {  # collection-only options: option -> argparse dest
+    "--output": "output", "--output-dir": "output_dir", "--lldp": "lldp",
+    "--lab-name": "lab_name", "--image": "image", "--fixup-rules": "fixup_rules",
+    "--verbose": "verbose", "--force": "force",
+}
+
+
 def main(argv=None, prog=None, base_dir=None):
     parser = build_parser(prog)
     args = parser.parse_args(argv)
+    if args.list:
+        for option, value in LIST_EXCLUDES.items():
+            if getattr(args, value) not in (None, False):
+                parser.error(f"--list cannot be combined with {option}")
     if args.output_dir and args.tag is None:
         parser.error("--output-dir requires --tag")
     if args.lldp and not args.output_dir:
