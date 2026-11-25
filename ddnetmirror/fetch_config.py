@@ -451,9 +451,9 @@ def load_fixup_rules(path):
 def write_startup(rules, name, config, output, verbose=False, force=False):
     """Apply the fixup rules to a copy of config and write it as a new file.
     With verbose, print what each rule changed (never config text)."""
-    report = (lambda line: print(f"fixup {name}: {line}")) if verbose else (lambda _: None)
+    report = (lambda line: print(f"fixup {shown(name)}: {line}")) if verbose else (lambda _: None)
     write_new_file(output, fixup.apply_rules(rules, config, report=report, verbose=verbose), force)
-    print(f"wrote startup config for {name} with fixups to {output}")
+    print(f"wrote startup config for {shown(name)} with fixups to {shown(output)}")
 
 
 def fetch_and_write(server, token, ca_bytes, device, name, output, force=False):
@@ -461,7 +461,8 @@ def fetch_and_write(server, token, ca_bytes, device, name, output, force=False):
     version = device.software_version or "unknown"
     config = fetch_running_config(server, token, ca_bytes, serial)
     write_new_file(output, config, force)
-    print(f"wrote running config for {name} ({shown(serial)}, EOS {shown(version)}) to {output}")
+    print(f"wrote running config for {shown(name)} ({shown(serial)}, EOS {shown(version)}) "
+          f"to {shown(output)}")
     return config
 
 
