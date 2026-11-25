@@ -47,7 +47,7 @@ Do not add semantic EOS parsers, config classification, automated config repair,
 - **Writer** (Claude Opus 5.5): implements narrowly scoped assignments with proportional tests; keeps changes focused and understandable; reports anything that exceeds the assignment's boundary.
 - **Reviewer** (fresh Claude Opus 5.5): independently reviews correctness, maintainability, scope, and test value; calls out needless abstraction and unnecessary tests; separates real defects from theoretical improvements; does not expand the project. A Writer never reviews its own implementation.
 - **Release Director** (Claude Opus 5.5, where applicable): directs release work under the same owner approvals.
-- **Supplemental Reviewer** (Codex, on demand): optional extra scrutiny, used only with owner authorization.
+- **Supplemental Reviewer** (Codex GPT-6.1 Sol, high, on demand): optional extra scrutiny, used only with owner authorization.
 
 ## Review policy
 
