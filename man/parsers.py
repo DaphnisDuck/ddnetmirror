@@ -17,3 +17,7 @@ def ddn_fixup():
 
 def ddn_up():
     return up.build_parser("ddn up")
+
+
+def ddn_down():
+    return up.build_down_parser("ddn down")

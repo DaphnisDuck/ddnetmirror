@@ -1,9 +1,14 @@
 """ddn up: build and deploy the lab described by ./ddnetmirror.yml.
+ddn down: destroy that lab with containerlab destroy.
 
 Reads the project file, refuses if the lab already has containers, then runs
 the same collection, fixup and topology path as `ddn fetch --tag ...
 --output-dir . --lldp --lab-name NAME --force`, and only if that completed,
 `containerlab deploy -t NAME.clab.yml`. Loading the project file runs nothing.
+
+ddn down runs `containerlab destroy -t NAME.clab.yml --cleanup` for the same
+project, after checking that the topology file is the project's own. It never
+removes the project file, topology or configs.
 """
 
 import argparse
@@ -38,7 +43,7 @@ def load_project(directory="."):
         with open(path, encoding="utf-8") as f:
             spec = yaml.safe_load(f)
     except FileNotFoundError:
-        raise ProjectError(f"no {path}: run ddn up in a lab project directory "
+        raise ProjectError(f"no {path}: run ddn in a lab project directory "
                            f"that contains {PROJECT_FILE}") from None
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         raise ProjectError(f"cannot read {path}: {exc}") from None
@@ -174,6 +179,62 @@ def main(argv=None, prog=None):
         print(f"error: containerlab deploy failed (exit {code}); nothing was torn down. "
               f"Inspect: {inspect}; remove: {destroy}",
               file=sys.stderr)
+    return code
+
+
+def check_topology(path, name):
+    """Refuse unless path is a regular file (not a symlink) whose lab name is name,
+    so containerlab destroy can only target this project's lab."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        raise ProjectError(f"no {path}: nothing to destroy (ddn up writes it)") from None
+    except OSError as exc:
+        raise ProjectError(f"cannot read {path}: {exc}") from None
+    if not stat.S_ISREG(info.st_mode):
+        raise ProjectError(f"{path} is not a regular file; not destroying")
+    try:
+        with open(path, encoding="utf-8") as f:
+            spec = yaml.safe_load(f)
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ProjectError(f"cannot read {path}: {exc}") from None
+    found = spec.get("name") if isinstance(spec, dict) else None
+    if found != name:
+        raise ProjectError(f"{path} is for lab {found!r}, not {name!r} from {PROJECT_FILE}; "
+                           "not destroying")
+
+
+def build_down_parser(prog=None):
+    return argparse.ArgumentParser(
+        prog=prog,
+        description=f"Destroy the lab described by ./{PROJECT_FILE}: run 'containerlab destroy "
+        "-t ./NAME.clab.yml --cleanup' (through sudo unless containerlab runs as you) and exit "
+        "with its status. Refuses unless NAME.clab.yml is a regular file for lab NAME. "
+        f"{PROJECT_FILE}, the topology and the configs are kept; no CloudVision access.",
+    )
+
+
+def down_main(argv=None, prog=None):
+    build_down_parser(prog).parse_args(argv)
+    directory = "."
+    try:
+        name = load_project(directory)["name"]
+        topology = fetch_config.topology_path(directory, name)
+        check_topology(topology, name)
+        command = containerlab_command("destroy", "-t", topology, "--cleanup")
+    except ProjectError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"destroying: {' '.join(command)}", flush=True)
+    try:
+        code = subprocess.run(command).returncode  # output unchanged
+    except KeyboardInterrupt:
+        return 130
+    except OSError as exc:  # sudo or containerlab could not be started
+        print(f"error: could not run {command[0]}: {exc.strerror or exc}", file=sys.stderr)
+        return 1
+    if code != 0:
+        print(f"error: containerlab destroy failed (exit {code})", file=sys.stderr)
     return code
 
 

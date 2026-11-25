@@ -28,7 +28,7 @@ def test_ddn_fixup_runs_the_same_logic_as_the_alias(tmp_path):
 
 
 @pytest.mark.parametrize("command, usage", [("fetch", "usage: ddn fetch"), ("fixup", "usage: ddn fixup"),
-                                            ("up", "usage: ddn up")])
+                                            ("up", "usage: ddn up"), ("down", "usage: ddn down")])
 def test_subcommand_help_names_ddn(capsys, command, usage):
     with pytest.raises(SystemExit) as exc:
         cli.main([command, "--help"])

@@ -166,7 +166,7 @@ def test_containerlab_runs_without_sudo_as_root(lab, monkeypatch):
     ("server: 443\nname: lab1\ntag: site=lab\n", "server must be a non-empty string"),
     (PROJECT + "image: auto\n", "leave image out"),
     ("- server: cv\n", "must be a mapping"),
-    (None, "no ./ddnetmirror.yml: run ddn up in a lab project directory"),
+    (None, "no ./ddnetmirror.yml: run ddn in a lab project directory"),
 ])
 def test_bad_project_file_stops_before_docker_or_cloudvision(lab, tmp_path, capsys, project, message):
     if project is None:
@@ -237,3 +237,44 @@ def test_containerlab_exit_status_is_returned_and_nothing_is_torn_down(lab, caps
     err = capsys.readouterr().err
     assert "containerlab deploy failed (exit 3); nothing was torn down" in err
     assert f"remove: sudo {lab['exe']} destroy -t ./lab1.clab.yml" in err
+
+
+def write_topology(tmp_path, name="lab1"):
+    (tmp_path / "lab1.clab.yml").write_text(f'# generated\nname: "{name}"\ntopology:\n  nodes: {{}}\n')
+
+
+def test_down_destroys_the_project_lab_and_keeps_its_files(lab, tmp_path, capsys):
+    write_topology(tmp_path)
+    before = sorted(p.name for p in tmp_path.iterdir())
+
+    assert up.down_main([], prog="ddn down") == 0
+
+    destroy = ["sudo", lab["exe"], "destroy", "-t", "./lab1.clab.yml", "--cleanup"]
+    assert lab["runs"] == [(destroy, {})] and lab["fetch"] == []
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+    assert f"destroying: {' '.join(destroy)}" in capsys.readouterr().out
+
+
+def test_down_returns_containerlab_exit_status(lab, tmp_path, capsys):
+    write_topology(tmp_path)
+    lab["deploy_rc"] = 4
+
+    assert up.down_main([]) == 4
+
+    assert "containerlab destroy failed (exit 4)" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("setup, message", [
+    (lambda p: None, "no ./lab1.clab.yml: nothing to destroy"),
+    (lambda p: write_topology(p, "other"), "is for lab 'other', not 'lab1'"),
+    (lambda p: (p / "lab1.clab.yml").symlink_to(p / "elsewhere.clab.yml"),
+     "./lab1.clab.yml is not a regular file"),
+    (lambda p: (p / "ddnetmirror.yml").write_text("name: lab1\n"), "missing server"),
+])
+def test_down_refuses_without_running_containerlab(lab, tmp_path, capsys, setup, message):
+    setup(tmp_path)
+
+    assert up.down_main([]) == 1
+
+    assert message in capsys.readouterr().err
+    assert lab["runs"] == []

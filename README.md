@@ -83,13 +83,14 @@ python3 -m venv .venv && .venv/bin/pip install .     # or -e ".[test]" for devel
 .venv/bin/ddn --help
 ```
 
-This installs one command, `ddn`, with three subcommands:
+This installs one command, `ddn`, with four subcommands:
 
 | Command | Purpose |
 |---|---|
 | `ddn fetch` | Query CloudVision: running configs, EOS versions, LLDP, and optionally a Containerlab topology. |
 | `ddn fixup` | Apply fixup rules to a copy of one config file. |
 | `ddn up` | Build and deploy the lab described by `ddnetmirror.yml` in the current directory ([below](#one-command-ddn-up)). |
+| `ddn down` | Destroy that lab with `containerlab destroy` ([below](#one-command-ddn-up)). |
 
 `ddn COMMAND --help` lists each command's options. Man pages and tldr-style examples are in [`man/`](man/). The older names `ddnetmirror-fetch-config` and `ddnetmirror-fixup` still work as aliases.
 
@@ -305,7 +306,7 @@ cd ~/labs/fabric && ddn up
 
 Running `ddn up` concurrently against the same project directory is unsupported: there is no lock, and overlapping runs can mix generated files. Run one at a time.
 
-There is no `ddn down`. Remove a lab with `sudo containerlab destroy -t ./NAME.clab.yml --cleanup`, then `ddn up` can deploy it again.
+`ddn down` removes the lab: in the same directory it runs `containerlab destroy -t ./NAME.clab.yml --cleanup`, with the same `sudo` handling, and exits with Containerlab's status. It refuses, running nothing, if `ddnetmirror.yml` is missing or invalid, or `NAME.clab.yml` is missing, a symlink or not a regular file, or names a different lab. It needs no CloudVision access or token, and keeps `ddnetmirror.yml`, the topology and the configs, so `ddn up` can deploy the lab again.
 
 ## Fetch a single device
 
