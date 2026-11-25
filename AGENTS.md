@@ -79,4 +79,6 @@ Optional Matt Pocock skills (exploratory evaluation); config in `docs/agents/`. 
 - The Dispatcher approves routine ticket breakdowns; the owner approves scope or architecture.
 - Research findings and rejected requests are recorded on GitHub (issue comments, closed `wontfix` issues), not in temporary repo files or `.out-of-scope/`. Legitimate product documentation is fine.
 - `GLOSSARY.md` and ADRs mirror decisions recorded on GitHub (cite the issue); they never track planning or authorize work.
+- A skill the model cannot invoke natively (`disable-model-invocation`) is followed from its installed `SKILL.md` when the owner or Dispatcher names it; disclose material deviations on the issue or PR. Following a skill this way changes no approval boundary.
+- Grill proportionally: resolve routine engineering questions from the code and consolidate consequential ones into one batch, each with a recommendation. Use full interactive grilling when the owner asks or when scope or requirements are genuinely unclear.
 - Wayfinder is not configured.
