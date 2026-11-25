@@ -377,25 +377,27 @@ def list_selection(conn, hostname, selected_tag):
     Rows (hostname, serial, EOS version; sorted, aligned) go to stdout, the summary
     to stderr. Returns True if every selected device was found in inventory."""
     if selected_tag is None:
-        devices, described = [find_device_by_hostname(*conn, hostname)], f"hostname {hostname}"
+        devices = [find_device_by_hostname(*conn, hostname)]
+        count, described = 1, f"hostname {hostname}"
     else:
         text = selected_tag[0]
-        device_ids, devices, described = find_tagged_device_ids(conn, selected_tag), [], f"tag {text}"
+        device_ids = find_tagged_device_ids(conn, selected_tag)
+        count, described = len(device_ids), f"tag {text}"
+        devices = []
         for device_id in device_ids:
             try:
                 devices.append(find_tagged_device(*conn, text, device_id))
             except FetchError as exc:  # as in collection: report it, list the rest
                 print(f"failed: {device_id}: {exc}", file=sys.stderr)
-    count = len(devices) if selected_tag is None else len(device_ids)
     print(f"selected {count} device{'s' * (count != 1)} with {described}", file=sys.stderr)
     rows = sorted(
         (shown(d.hostname or "-"), shown(d.key.device_id), shown(d.software_version or "unknown"))
         for d in devices
     )
-    widths = [max(len(row[i]) for row in rows) for i in range(2)]
+    widths = [max((len(row[i]) for row in rows), default=0) for i in range(2)]
     for name, serial, version in rows:
         print(f"{name:<{widths[0]}}  {serial:<{widths[1]}}  {version}")
-    return len(devices) == count
+    return len(devices) == count  # False if a selected device is missing from inventory
 
 
 NO_FIXUPS = "none"  # --fixup-rules none: no fixups, not even the user default
@@ -690,7 +692,7 @@ def build_parser(prog=None):
         help="device tag KEY=VALUE (exact, case-sensitive), or an expression of such terms "
         "with not, and, or (in that precedence) and parentheses, e.g. "
         "'(site=lab or site=dr) and not role=spine'; 'not' covers devices without the tag. "
-        "Must match exactly one device unless --output-dir is given",
+        "Must match exactly one device unless --output-dir or --list is given",
     )
     parser.add_argument(
         "--list",

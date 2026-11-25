@@ -1375,3 +1375,14 @@ def test_list_escapes_control_characters(cv, capsys):
     assert run("--list", selector=("--hostname", "LEAF\x1b[31m1")) == 0
 
     assert capsys.readouterr().out == "leaf\\x1b[31m1  SN1  4.32\\x0a1F\n"
+
+
+def test_list_reports_tagged_devices_missing_from_inventory(cv, capsys):
+    cv["tagged"] = ["SN9"]  # tag assignment for a device inventory no longer has
+
+    assert run("--list", selector=("--tag", "role=leaf")) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "failed: SN9: no device with device_id 'SN9'" in captured.err
+    assert "selected 1 device with tag role=leaf" in captured.err
