@@ -160,6 +160,24 @@ not role=spine
 - **Limitation: standalone operator words are reserved.** A plain tag whose value contains `and`, `or` or `not` as a separate word, such as `description=research and development`, is read as an expression and refused with a syntax error (exit 2). Such a tag can't be selected with `--tag` for now.
 - **Inside an expression,** a term can't contain whitespace or parentheses; such a tag can't be combined, and the expression is refused with a syntax error. There is no quoting.
 - **Validation.** A malformed expression (empty, a dangling operator, unbalanced parentheses, a term without `=`) is a usage error before anything is contacted or written.
+- **Check first.** Add `--list` to see which devices an expression selects before collecting (see below).
+
+### Preview a selection: `--list`
+
+`--list` selects devices exactly as collection does, prints them and stops. It fetches no configs and writes no files, and `--output-dir` isn't needed:
+
+```sh
+ddn fetch --server www.arista.io --tag 'site=lab and not role=spine' --list
+```
+
+```text
+selected 3 devices with tag site=lab and not role=spine
+border1  SN-BORDER1  4.33.1F
+leaf1    SN-LEAF1    4.34.2F
+leaf2    SN-LEAF2    unknown
+```
+
+Rows (hostname, serial, EOS version, sorted by hostname) go to stdout and the summary line to stderr, so the rows can be piped. A device without an inventory hostname shows `-`, one without an EOS version `unknown`; control characters are escaped. `--hostname leaf1 --list` shows the single device a hostname selects. Errors (no match, an ambiguous hostname, a lookup or token failure) are the same as for collection, with exit status 1. `--list` can't be combined with the output, LLDP, lab or fixup options.
 - **Selection.** Each device is selected once, in device-ID order, and the count is printed (`selected 12 devices with tag …`). There is no size limit and no confirmation: a broad expression such as `not role=spine` is a valid choice. No match is the same error as for a plain tag. Without `--output-dir`, the expression must still match exactly one device.
 
 `lab1/lab1.clab.yml`:

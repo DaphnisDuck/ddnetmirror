@@ -1312,3 +1312,66 @@ def test_explicit_image_never_runs_docker(batch, tmp_path, monkeypatch):
     parsed = yaml.safe_load((tmp_path / "lab" / "lab1.clab.yml").read_text())["topology"]
     assert parsed["defaults"]["image"] == "ceos:4.35.7.2M"
     assert set(map(str, parsed["nodes"].values())) == {"{}"}
+
+
+def test_list_by_hostname_prints_the_device_and_stops(cv, tmp_path, capsys):
+    cv["serials"] = ["SN1", "SN2"]
+    cv["hostnames"] = {"SN1": "Spine1", "SN2": "LEAF1"}
+    cv["version"] = "4.32.1F"
+
+    assert run("--list", selector=("--hostname", "leaf1")) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == "LEAF1  SN2  4.32.1F\n"
+    assert captured.err == "selected 1 device with hostname leaf1\n"
+    assert cv["compliance_calls"] == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_list_by_tag_selects_what_collection_selects(cv, tmp_path, capsys):
+    cv["serials"], cv["tags"] = list(TAGS), TAGS
+    cv["hostnames"] = {"SN1": "leaf1", "SN2": "leaf2", "SN3": "spine1", "SN4": ""}
+    cv["versions"] = {"SN1": "4.32.1F"}
+    expression = "site=lab and not role=spine"
+
+    assert run("--list", selector=("--tag", expression)) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == "-      SN4  unknown\nleaf1  SN1  4.32.1F\n"
+    assert captured.err == f"selected 2 devices with tag {expression}\n"
+    assert list(tmp_path.iterdir()) == []
+    cv["result"]["config"] = "hostname x\n"
+    assert run(selector=("--tag", expression, "--output-dir", "lab")) == 0
+    assert sorted(cv["config_ids"]) == ["SN1", "SN4"]
+
+
+def test_list_with_no_match_fails_like_collection(cv, tmp_path, capsys):
+    cv["serials"], cv["tags"] = list(TAGS), TAGS
+
+    assert run("--list", selector=("--tag", "role=border")) == 1
+    listed = capsys.readouterr().err
+    assert run(selector=("--tag", "role=border", "--output-dir", "lab")) == 1
+
+    assert listed == capsys.readouterr().err == "error: no device with tag role=border\n"
+    assert cv["compliance_calls"] == []
+
+
+@pytest.mark.parametrize("extra", [
+    ("--output", "x.cfg"), ("--output-dir", "lab"), ("--lldp",), ("--lab-name", "lab1"),
+    ("--image", "ceos:1"), ("--fixup-rules", "none"), ("--verbose",), ("--force",),
+])
+def test_list_rejects_collection_options(cv, tmp_path, capsys, extra):
+    with pytest.raises(SystemExit) as exc:
+        run("--list", *extra, selector=("--tag", "role=leaf"))
+
+    assert exc.value.code == 2
+    assert f"--list cannot be combined with {extra[0]}" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_list_escapes_control_characters(cv, capsys):
+    cv["hostname"], cv["version"] = "leaf\x1b[31m1", "4.32\n1F"
+
+    assert run("--list", selector=("--hostname", "LEAF\x1b[31m1")) == 0
+
+    assert capsys.readouterr().out == "leaf\\x1b[31m1  SN1  4.32\\x0a1F\n"
