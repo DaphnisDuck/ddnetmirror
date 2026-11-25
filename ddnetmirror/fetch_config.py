@@ -389,7 +389,7 @@ def list_selection(conn, hostname, selected_tag):
             try:
                 devices.append(find_tagged_device(*conn, text, device_id))
             except FetchError as exc:  # as in collection: report it, list the rest
-                print(f"failed: {device_id}: {exc}", file=sys.stderr)
+                print(f"failed: {shown(device_id)}: {shown(exc)}", file=sys.stderr)
     print(f"selected {count} device{'s' * (count != 1)} with {described}", file=sys.stderr)
     rows = sorted(
         (shown(d.hostname or "-"), shown(d.key.device_id), shown(d.software_version or "unknown"))
@@ -452,9 +452,9 @@ def load_fixup_rules(path):
 def write_startup(rules, name, config, output, verbose=False, force=False):
     """Apply the fixup rules to a copy of config and write it as a new file.
     With verbose, print what each rule changed (never config text)."""
-    report = (lambda line: print(f"fixup {name}: {line}")) if verbose else (lambda _: None)
+    report = (lambda line: print(f"fixup {shown(name)}: {line}")) if verbose else (lambda _: None)
     write_new_file(output, fixup.apply_rules(rules, config, report=report, verbose=verbose), force)
-    print(f"wrote startup config for {name} with fixups to {output}")
+    print(f"wrote startup config for {shown(name)} with fixups to {shown(output)}")
 
 
 def fetch_and_write(server, token, ca_bytes, device, name, output, force=False):
@@ -462,7 +462,8 @@ def fetch_and_write(server, token, ca_bytes, device, name, output, force=False):
     version = device.software_version or "unknown"
     config = fetch_running_config(server, token, ca_bytes, serial)
     write_new_file(output, config, force)
-    print(f"wrote running config for {name} ({serial}, EOS {version}) to {output}")
+    print(f"wrote running config for {shown(name)} ({shown(serial)}, EOS {shown(version)}) "
+          f"to {shown(output)}")
     return config
 
 
@@ -508,7 +509,7 @@ def collect_tag(
 
     def fail(name, reason, into=failures):
         into.append(name)
-        print(f"failed: {name}: {reason}", file=sys.stderr)
+        print(f"failed: {shown(name)}: {shown(reason)}", file=sys.stderr)
 
     found = []
     saved = {}  # name -> device, for configs written in this run
@@ -558,11 +559,12 @@ def collect_tag(
             if device.hostname:
                 devices.append((device.hostname, device.key.device_id))
             else:
-                print(f"skipped LLDP: {device.key.device_id}: no inventory hostname", file=sys.stderr)
+                print(f"skipped LLDP: {shown(device.key.device_id)}: no inventory hostname",
+                      file=sys.stderr)
         try:
             links, lldp_available = lldp.report_links(server, token, conn[3], devices)
         except Exception as exc:
-            print(f"LLDP report unavailable: {exc}", file=sys.stderr)
+            print(f"LLDP report unavailable: {shown(exc)}", file=sys.stderr)
     if lab:
         written_topology = write_topology(
             output_dir, lab, len(device_ids), saved, links, lldp_available, startup, force
@@ -653,10 +655,10 @@ def choose_images(selector, saved):
     for name in sorted(saved):
         version = saved[name].software_version
         chosen[name], reason, cross_train = selector.choose(version)
-        print(f"image for {name} (EOS {version or 'unknown'}): {chosen[name]} ({reason})")
+        print(f"image for {name} (EOS {shown(version or 'unknown')}): {chosen[name]} ({reason})")
         if cross_train:
             print(f"warning: {name} gets {chosen[name]} from another release train than its "
-                  f"EOS {version}; version matching does not establish configuration "
+                  f"EOS {shown(version)}; version matching does not establish configuration "
                   "compatibility", file=sys.stderr)
     picks = list(chosen.values())
     default = max(picks, key=picks.count)  # first maximum: deterministic
@@ -794,7 +796,7 @@ def main(argv=None, prog=None, base_dir=None):
     try:
         complete = run(args, base_dir)
     except (FetchError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {shown(exc)}", file=sys.stderr)
         return 1
     return 0 if complete else 1
 
