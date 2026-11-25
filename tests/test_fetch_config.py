@@ -401,6 +401,9 @@ TAGS = {  # SN4 has no role tag
     ("(site=dr)or(role=spine)", ["SN2", "SN3"]),
     ("Role=leaf or site=dr", ["SN2"]),  # keys and values are case-sensitive
     ("role=leaf or site=lab", ["SN1", "SN2", "SN3", "SN4"]),  # each device once
+    ("site=lab AND NOT role=spine", ["SN1", "SN4"]),  # operators in any case
+    ("(site=lab Or site=dr) aNd role=leaf", ["SN1", "SN2"]),
+    ("Role=leaf OR site=dr", ["SN2"]),
 ])
 def test_tag_expressions_select_sorted_distinct_devices(cv, expression, selected):
     cv["serials"], cv["tags"] = list(TAGS), TAGS
@@ -424,6 +427,8 @@ def test_tag_expressions_select_sorted_distinct_devices(cv, expression, selected
     ("site=lab or site=dr)", "unexpected ')'"),
     ("site=lab and role", "expected KEY=VALUE, got 'role'"),
     ("site=lab and role=", "expected KEY=VALUE, got 'role='"),
+    ("site=lab AND", "it ends where"),
+    ("OR site=lab", "unexpected 'or'"),
 ])
 def test_bad_tag_expressions_are_syntax_errors(expression, message):
     with pytest.raises(argparse.ArgumentTypeError, match=re.escape(message)):
@@ -434,6 +439,20 @@ def test_plain_tag_without_operator_words_is_unchanged():
     assert fetch_config.parse_tag("site=New York (2)") == (
         "site=New York (2)", ("tag", "site", "New York (2)"))
     assert fetch_config.parse_tag("and=or")[1] == ("tag", "and", "or")  # operators only as words
+
+
+@pytest.mark.parametrize("expression", [
+    "(site=lab OR site=dr) AND NOT role=spine",
+    "(site=lab Or site=dr) aNd nOt role=spine",
+])
+def test_operator_case_gives_the_same_tree_and_keeps_term_case(expression):
+    lowercase = fetch_config.parse_tag("(site=lab or site=dr) and not role=spine")[1]
+    assert fetch_config.parse_tag(expression) == (expression, lowercase)
+    assert fetch_config.parse_tag("AND=OR")[1] == ("tag", "AND", "OR")  # terms keep their case
+    assert fetch_config.parse_tag("role=OR or site=Not")[1] == (
+        "or", ("tag", "role", "OR"), ("tag", "site", "Not"))
+    args = fetch_config.build_parser().parse_args(["--server=cv", "--list", f"--tag={expression}"])
+    assert args.tag[1] == lowercase
 
 
 def test_tag_expression_collects_with_a_selected_count(cv, tmp_path, capsys):
