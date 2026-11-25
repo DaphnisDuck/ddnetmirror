@@ -226,6 +226,21 @@ leaf2    SN-LEAF2    unknown
 
 Rows (hostname, serial, EOS version, sorted by hostname) go to stdout and the summary line to stderr, so the rows can be piped. A device without an inventory hostname shows `-`, one without an EOS version `unknown`; control characters are escaped. `--hostname leaf1 --list` shows the single device a hostname selects. Errors (no match, an ambiguous hostname, a lookup or token failure) are the same as for collection, with exit status 1. `--list` can't be combined with the output, LLDP, lab or fixup options.
 
+### Leave devices out: `--exclude-host`
+
+To drop a few devices from a tag selection without changing CloudVision tags, repeat `--exclude-host HOSTNAME`:
+
+```sh
+ddn fetch --server cvp.example.net --tag 'site=lab and not role=border' \
+    --exclude-host leaf03 --exclude-host leaf04 --list
+```
+
+- **Applied right after selection,** before anything is collected. `--list`, collection, LLDP and the topology all use the reduced selection: an excluded device's config is never fetched, it is no node, and links to it are skipped as `not in selection`. The selected count is the count after exclusion.
+- **Matching** is by inventory hostname, exact but ignoring case, as for `--hostname`. There are no wildcards or patterns. Each excluded device is printed (`excluded: leaf03 (SN-LEAF03)`).
+- **A hostname that matches no selected device** (a typo, or a device the tag doesn't select) is a `warning:`, not an error.
+- **Errors:** a hostname matching several selected devices that differ only in case is refused as ambiguous; excluding every selected device is refused. Nothing is collected or written.
+- **Only with `--tag`.** `--hostname` with `--exclude-host` is a usage error.
+
 ### Images: picked by EOS version unless you pass `--image`
 
 With `--lab-name` and no `--image`, a local `ceos` image is picked per device from the EOS version that CloudVision inventory reports:
@@ -288,6 +303,9 @@ tag: site=lab             # device tag KEY=VALUE, or a tag expression ('role=lea
 # cacert: ca.pem          # CA bundle for on-prem CVP (relative to this directory)
 # fixup-rules: rules.yml  # relative to this directory, or "none"; default: the user default rules
 # image: ceos:4.35.7.2M   # one image for every node; default: picked per device by EOS version
+# exclude-hosts:          # hostnames to leave out of the tag selection (as ddn fetch --exclude-host)
+#   - leaf03
+#   - leaf04
 ```
 
 ```sh
@@ -297,7 +315,7 @@ cd ~/labs/fabric && ddn up
 `ddn up` does this:
 1. **Validates the project file.** Unknown keys are refused, and so is a token or token file: the token comes from `--token-file PATH` on the `ddn up` command line, `CLOUDVISION_TOKEN` or the default [token file](#token-file), as for `ddn fetch`. Reading the file runs nothing.
 2. **Refuses an existing lab.** If Docker has any container (running or stopped) of a Containerlab lab with this name, `ddn up` refuses and changes nothing. It tells you how to remove the lab. It never destroys or redeploys a lab itself.
-3. **Regenerates the project's files** in this directory, exactly like `ddn fetch --tag TAG --output-dir . --lldp --lab-name NAME --force`: `configs/collected/`, `configs/startup/` (with fixup rules) and `NAME.clab.yml`. Other files are untouched.
+3. **Regenerates the project's files** in this directory, exactly like `ddn fetch --tag TAG --output-dir . --lldp --lab-name NAME --force` (plus one `--exclude-host` per `exclude-hosts` entry): `configs/collected/`, `configs/startup/` (with fixup rules) and `NAME.clab.yml`. Other files are untouched.
 4. **Deploys only a complete lab.** If any device failed or no topology was written, it stops with `not deploying` and the files are left for you to inspect.
 5. **Runs `containerlab deploy -t ./NAME.clab.yml`.** Containerlab needs root unless it is installed setuid for the `clab_admins` group, so `ddn up` runs it through `sudo` unless you are root or containerlab is setuid-root; sudo may ask for your password. The command is printed first, and Containerlab's output, including its table of nodes and addresses, is shown unchanged. `ddn up` exits with Containerlab's exit status.
 

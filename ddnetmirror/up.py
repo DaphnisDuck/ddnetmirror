@@ -19,7 +19,7 @@ from ddnetmirror import fetch_config
 
 PROJECT_FILE = "ddnetmirror.yml"
 REQUIRED = ("server", "name", "tag")
-OPTIONAL = ("cacert", "fixup-rules", "image")
+OPTIONAL = ("cacert", "fixup-rules", "image", "exclude-hosts")
 DOCKER_TIMEOUT = 30  # seconds
 
 
@@ -52,7 +52,11 @@ def load_project(directory="."):
     if missing:
         raise ProjectError(f"{path}: missing {', '.join(missing)}")
     for key, value in spec.items():
-        if not isinstance(value, str) or not value.strip():
+        if key == "exclude-hosts":
+            if not isinstance(value, list) or not all(
+                    isinstance(h, str) and h.strip() for h in value):
+                raise ProjectError(f"{path}: exclude-hosts must be a list of hostnames")
+        elif not isinstance(value, str) or not value.strip():
             raise ProjectError(f"{path}: {key} must be a non-empty string")
     try:
         fetch_config.parse_lab_name(spec["name"])
@@ -80,6 +84,7 @@ def fetch_args(project, directory=".", token_file=None):
                         ("fixup-rules", "--fixup-rules")):
         if key in project:
             args.append(f"{option}={project[key]}")
+    args += [f"--exclude-host={h}" for h in project.get("exclude-hosts", [])]
     if token_file is not None:
         args.append(f"--token-file={token_file}")
     return args
@@ -119,7 +124,8 @@ def build_parser(prog=None):
         "completed, run 'containerlab deploy' (through sudo unless containerlab runs as you). "
         f"{PROJECT_FILE} keys: server, name, tag (KEY=VALUE or an expression, as for ddn "
         "fetch --tag); optional cacert, "
-        "fixup-rules (a path or none), image. The token is read as for ddn fetch: "
+        "fixup-rules (a path or none), image, exclude-hosts (a list of hostnames, as for "
+        "ddn fetch --exclude-host). The token is read as for ddn fetch: "
         "--token-file, else CLOUDVISION_TOKEN, else the default token file.",
     )
     fetch_config.add_token_file_argument(parser)

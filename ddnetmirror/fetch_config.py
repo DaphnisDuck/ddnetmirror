@@ -96,11 +96,12 @@ def tagged_device_ids(host, port, token, ca_file, label, value):
     return {a.key.device_id for a in assignments}
 
 
-def find_tagged_device_ids(conn, selection):
+def find_tagged_device_ids(conn, selection, exclude=()):
     """Return the sorted distinct device_ids selected by a parsed --tag (at least one).
 
     Each KEY=VALUE term is one tag assignment query; "not" is taken against the
-    whole inventory, so "not role=spine" includes devices without a role tag."""
+    whole inventory, so "not role=spine" includes devices without a role tag.
+    exclude: --exclude-host hostnames, dropped from the selection (see exclude_hosts)."""
     text, tree = selection
     terms, universe = {}, []
 
@@ -119,7 +120,36 @@ def find_tagged_device_ids(conn, selection):
     device_ids = sorted(ids(tree))
     if not device_ids:
         raise FetchError(f"no device with tag {text}")
-    return device_ids
+    return exclude_hosts(conn, text, device_ids, exclude) if exclude else device_ids
+
+
+def exclude_hosts(conn, text, device_ids, exclude):
+    """Return device_ids without the devices whose inventory hostname equals an
+    excluded hostname ignoring case (exact otherwise, as --hostname matches).
+
+    An exclusion matching no selected device is a warning; one matching several
+    (hostnames that differ only in case) is an error, never a guess. Excluding
+    every selected device is an error."""
+    selected = set(device_ids)
+    hostnames = {d.key.device_id: d.hostname or "" for d in list_inventory(*conn)
+                 if d.key.device_id in selected}
+    dropped = set()
+    for name in {h.casefold(): h for h in exclude}.values():  # each hostname once
+        found = sorted(i for i, h in hostnames.items() if h.casefold() == name.casefold())
+        if not found:
+            print(f"warning: excluded host '{shown(name)}' matches no device selected by tag "
+                  f"{text}", file=sys.stderr)
+        elif len(found) > 1:
+            listed = ", ".join(f"{shown(hostnames[i])} ({shown(i)})" for i in found)
+            raise FetchError(f"excluded host '{shown(name)}' is ambiguous: {len(found)} selected "
+                             f"devices with that hostname ignoring case: {listed}")
+        else:
+            dropped.add(found[0])
+            print(f"excluded: {shown(hostnames[found[0]])} ({shown(found[0])})", file=sys.stderr)
+    remaining = [i for i in device_ids if i not in dropped]
+    if not remaining:
+        raise FetchError(f"every device with tag {text} is excluded")
+    return remaining
 
 
 def find_tagged_device(host, port, token, ca_file, text, device_id):
@@ -341,7 +371,7 @@ def run(args, base_dir=None):
     server = f"{host}:{port}"
 
     if args.list:
-        return list_selection(conn, args.hostname, args.tag)
+        return list_selection(conn, args.hostname, args.tag, args.exclude_host)
 
     if args.output_dir:
         lab = None
@@ -350,14 +380,14 @@ def run(args, base_dir=None):
             ensure_absent(topology_path(args.output_dir, args.lab_name), args.force)
         return collect_tag(
             conn, server, ca_bytes, args.tag, args.output_dir, args.lldp, lab, rules, args.verbose,
-            args.force,
+            args.force, args.exclude_host,
         )
 
     if by_hostname:
         device = find_device_by_hostname(*conn, args.hostname)
     else:
         text = args.tag[0]
-        device_ids = find_tagged_device_ids(conn, args.tag)
+        device_ids = find_tagged_device_ids(conn, args.tag, args.exclude_host)
         if len(device_ids) > 1:
             raise FetchError(f"{len(device_ids)} devices with tag {text}: {', '.join(device_ids)}")
         device = find_tagged_device(*conn, text, device_ids[0])
@@ -371,7 +401,7 @@ def run(args, base_dir=None):
     return True
 
 
-def list_selection(conn, hostname, selected_tag):
+def list_selection(conn, hostname, selected_tag, exclude=()):
     """Print the devices a selection picks, as collection selects them; fetch and write nothing.
 
     Rows (hostname, serial, EOS version; sorted, aligned) go to stdout, the summary
@@ -381,7 +411,7 @@ def list_selection(conn, hostname, selected_tag):
         count, described = 1, f"hostname {hostname}"
     else:
         text = selected_tag[0]
-        device_ids = find_tagged_device_ids(conn, selected_tag)
+        device_ids = find_tagged_device_ids(conn, selected_tag, exclude)
         count, described = len(device_ids), f"tag {text}"
         devices = []
         for device_id in device_ids:
@@ -471,7 +501,7 @@ def topology_path(output_dir, lab_name):
 
 def collect_tag(
     conn, server, ca_bytes, selected_tag, output_dir, report_lldp=False, lab=None, rules=None,
-    verbose=False, force=False,
+    verbose=False, force=False, exclude=(),
 ):
     """Collect every device selected by the parsed --tag into output_dir, sequentially.
 
@@ -493,10 +523,12 @@ def collect_tag(
     replaced before the failure (e.g. configs/collected/<name>.cfg when its fixup
     fails)
     are not restored: there is no rollback. Other files are never looked at.
+
+    exclude: --exclude-host hostnames, dropped before anything is collected.
     """
     text = selected_tag[0]
     token = conn[2]
-    device_ids = find_tagged_device_ids(conn, selected_tag)
+    device_ids = find_tagged_device_ids(conn, selected_tag, exclude)
     print(f"selected {len(device_ids)} device{'s' * (len(device_ids) != 1)} with tag {text}")
     collected_dir = os.path.join(output_dir, COLLECTED)
     os.makedirs(collected_dir, exist_ok=True)
@@ -695,6 +727,15 @@ def build_parser(prog=None):
         "Must match exactly one device unless --output-dir or --list is given",
     )
     parser.add_argument(
+        "--exclude-host",
+        action="append",
+        default=[],
+        metavar="HOSTNAME",
+        help="with --tag: leave out the selected device with this inventory hostname "
+        "(exact, any case) before anything is collected; repeat for more devices. "
+        "A hostname matching no selected device is a warning",
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         help="print the devices --hostname or --tag selects (hostname, serial, EOS version) "
@@ -763,6 +804,10 @@ def main(argv=None, prog=None, base_dir=None):
         for option, value in LIST_EXCLUDES.items():
             if getattr(args, value) not in (None, False):
                 parser.error(f"--list cannot be combined with {option}")
+    if args.exclude_host and args.tag is None:
+        parser.error("--exclude-host requires --tag (not --hostname)")
+    if not all(h.strip() for h in args.exclude_host):
+        parser.error("--exclude-host must not be empty")
     if args.output_dir and args.tag is None:
         parser.error("--output-dir requires --tag")
     if args.lldp and not args.output_dir:
