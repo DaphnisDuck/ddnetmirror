@@ -154,10 +154,10 @@ not role=spine
 (site=lab or site=dr) and role=leaf
 ```
 
-- **Operators.** `not`, `and` and `or`, in that order of precedence, with parentheses for grouping: `site=dr or site=lab and role=spine` means `site=dr or (site=lab and role=spine)`. Operators are lowercase words separated by whitespace or parentheses.
+- **Operators.** `not`, `and` and `or`, in that order of precedence, with parentheses for grouping: `site=dr or site=lab and role=spine` means `site=dr or (site=lab and role=spine)`. Operators are words in any case (`and`, `AND`, `And`) separated by whitespace or parentheses.
 - **Terms** match a CloudVision device tag exactly, including case. `not role=spine` selects every inventory device without that tag, including devices with no `role` tag at all.
-- **Plain tags are unchanged.** A `--tag` without a standalone `and`, `or` or `not` word (separated by whitespace or parentheses) is one `KEY=VALUE`, as before. Its value may contain spaces or parentheses (`site=New York`). Operator words inside a term are just text (`team=and` is a plain tag).
-- **Limitation: standalone operator words are reserved.** A plain tag whose value contains `and`, `or` or `not` as a separate word, such as `description=research and development`, is read as an expression and refused with a syntax error (exit 2). Such a tag can't be selected with `--tag` for now.
+- **Plain tags are unchanged.** A `--tag` without a standalone `and`, `or` or `not` word in any case (separated by whitespace or parentheses) is one `KEY=VALUE`, as before. Its value may contain spaces or parentheses (`site=New York`). Operator words inside a term are just text (`team=and` is a plain tag).
+- **Limitation: standalone operator words are reserved.** A plain tag whose value contains `and`, `or` or `not` in any case as a separate word, such as `description=research and development`, is read as an expression and refused with a syntax error (exit 2). Such a tag can't be selected with `--tag` for now.
 - **Inside an expression,** a term can't contain whitespace or parentheses; such a tag can't be combined, and the expression is refused with a syntax error. There is no quoting.
 - **Validation.** A malformed expression (empty, a dangling operator, unbalanced parentheses, a term without `=`) is a usage error before anything is contacted or written.
 - **Selection.** Each device is selected once, in device-ID order, and the count is printed (`selected 12 devices with tag …`). There is no size limit and no confirmation: a broad expression such as `not role=spine` is a valid choice. No match is the same error as for a plain tag. Without `--output-dir` (or `--list`), the expression must still match exactly one device.

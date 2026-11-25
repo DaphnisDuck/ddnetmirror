@@ -231,13 +231,14 @@ def parse_tag(text):
     """Parse --tag into (text, tree); tree nodes are ("tag", KEY, VALUE),
     ("not", x), ("and", x, y) and ("or", x, y).
 
-    Without an and/or/not word (separated by whitespace or parentheses), text is
+    Without an and/or/not word in any case (separated by whitespace or parentheses), text is
     one plain KEY=VALUE exactly as
     before (the value may contain spaces or parentheses). Otherwise it is an
     expression: not > and > or, with parentheses; terms are KEY=VALUE without
     whitespace or parentheses, separated by whitespace or parentheses.
     """
-    tokens = re.findall(r"[()]|[^\s()]+", text)  # parentheses separate words too
+    tokens = [token.lower() if token.lower() in TAG_OPERATORS else token  # AND, Or, nOt
+              for token in re.findall(r"[()]|[^\s()]+", text)]  # parentheses separate words too
     if not any(token in TAG_OPERATORS for token in tokens):
         return text, parse_term(text)
     pos = 0

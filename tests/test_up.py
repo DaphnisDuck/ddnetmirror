@@ -102,8 +102,11 @@ def test_values_starting_with_a_dash_stay_values():
         "-cv", ("tag", "-site", "lab"), "-rules.yml", "-ceos:1", "-ca.pem")
 
 
-def test_project_tag_may_be_an_expression_passed_to_fetch_unchanged(lab, tmp_path):
-    expression = "(site=lab or site=dr) and not role=spine"
+@pytest.mark.parametrize("expression", [
+    "(site=lab or site=dr) and not role=spine",
+    "(site=lab OR site=dr) And NOT role=spine",
+])
+def test_project_tag_may_be_an_expression_passed_to_fetch_unchanged(lab, tmp_path, expression):
     (tmp_path / "ddnetmirror.yml").write_text(f"server: cv\nname: lab1\ntag: {expression}\n")
 
     assert up.main([]) == 0
