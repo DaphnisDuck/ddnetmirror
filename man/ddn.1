@@ -1,4 +1,4 @@
-.TH DDN "1" "2026\-11\-21" "ddnetmirror 0.0.1" "ddnetmirror manual"
+.TH DDN "1" "2026\-11\-25" "ddnetmirror 0.0.1" "ddnetmirror manual"
 .SH NAME
 ddn \- build Containerlab labs from Arista CloudVision data
 .SH SYNOPSIS
@@ -9,13 +9,14 @@ ddnetmirror. Run 'ddn COMMAND \-\-help' for a command's options.
 
 .TP
 \fBCOMMAND\fR
-fetch, fixup or up
+fetch, fixup, up or down
 
 .SH COMMENTS
 commands:
   fetch   fetch running configs from CloudVision (ddnetmirror\-fetch\-config)
   fixup   apply text fixup rules to a copy of a config (ddnetmirror\-fixup)
   up      fetch, fix up, generate and deploy the lab in ./ddnetmirror.yml
+  down    destroy the lab in ./ddnetmirror.yml (containerlab destroy)
 
 .SH DISTRIBUTION
 The latest version of ddnetmirror may be downloaded from
