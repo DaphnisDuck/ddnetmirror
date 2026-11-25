@@ -1,4 +1,4 @@
-"""ddn: one command for the ddnetmirror tools (ddn fetch, ddn fixup, ddn up)."""
+"""ddn: one command for the ddnetmirror tools (ddn fetch, ddn fixup, ddn up, ddn down)."""
 
 import argparse
 import sys
@@ -9,6 +9,7 @@ COMMANDS = {
     "fetch": (fetch_config.main, "fetch running configs from CloudVision (ddnetmirror-fetch-config)"),
     "fixup": (fixup.main, "apply text fixup rules to a copy of a config (ddnetmirror-fixup)"),
     "up": (up.main, "fetch, fix up, generate and deploy the lab in ./ddnetmirror.yml"),
+    "down": (up.down_main, "destroy the lab in ./ddnetmirror.yml (containerlab destroy)"),
 }
 
 
@@ -19,7 +20,7 @@ def build_parser():
         epilog="commands:\n" + "\n".join(f"  {n:8}{h}" for n, (_, h) in COMMANDS.items()),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("command", choices=COMMANDS, metavar="COMMAND", help="fetch, fixup or up")
+    parser.add_argument("command", choices=COMMANDS, metavar="COMMAND", help="fetch, fixup, up or down")
     return parser
 
 

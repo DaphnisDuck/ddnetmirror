@@ -56,6 +56,10 @@
 
 `ddn up --token-file {{~/.config/ddnetmirror/tokens/staging}}`
 
+- Destroy that lab, keeping the project's files:
+
+`ddn down`
+
 - Show the options of a subcommand:
 
-`ddn {{fetch|fixup|up}} --help`
+`ddn {{fetch|fixup|up|down}} --help`
