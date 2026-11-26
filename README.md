@@ -240,25 +240,25 @@ sudo containerlab destroy -t lab1/lab1.clab.yml --cleanup
 
 ddnetmirror generates lab files. It does not deploy, start, stop or otherwise manage running labs. That is Containerlab's job.
 
+Smaller steps of the same command, each leaving out more options:
+- **Topology without fixups:** omit `--fixup-rules` (and have no [user default rules](#user-default-fixup-rules)), or pass `--fixup-rules none`. No `configs/lab/` is written, and the topology boots the original configs directly: `startup-config: "configs/original/__clabNodeName__.cfg"`.
+- **LLDP report only:** omit `--fixup-rules`, `--lab-name` and `--image`. The configs are collected and the links are printed; no topology is written.
+- **Collection only:** additionally omit `--lldp`. `--output-dir` only collects the configs into `configs/original/`.
+
 ### Containerlab rewrites startup configs when it deploys
 
-Containerlab does not boot a startup config exactly as written. When it creates a node, it first replaces environment variables that are set in its own environment (`$VAR`, `${VAR}`), then evaluates `{{ … }}` as a Go template. This is from reading the Containerlab 0.83.0 source (`GenerateConfig` in `nodes/default_node.go`); ddnetmirror has not reproduced it. A production config that happens to contain such text can therefore:
-- fail to deploy (a template error);
+Containerlab does not boot a startup config exactly as written. When it creates a node, it first expands `$VAR` and `${…}` expressions from its own environment, then evaluates `{{ … }}` as a Go template. Set variables are substituted; `${…}` forms can change even when the variable is unset (a `${VAR:-default}` becomes its default); `$$` becomes `$`. This is from reading the Containerlab 0.83.0 source (`GenerateConfig` in `nodes/default_node.go`, which uses `hellt/envsubst` 0.2.0); ddnetmirror has not reproduced it. A production config that happens to contain such text can therefore:
+- fail to deploy (a template error, or a `${` without a closing `}` on the same line);
 - boot with silently altered text, for example a `$` inside a hashed secret or a banner;
 - receive the value of a variable exported in your shell, such as `CLOUDVISION_TOKEN`, in a lab node's config.
 
 Before deploying, check the config directory the topology references (`configs/lab/` with fixups, otherwise `configs/original/`), for example:
 
 ```sh
-grep -nE '\$[A-Za-z_{]|\{\{' lab1/configs/lab/*.cfg
+grep -nE '\$[A-Za-z_{$]|\{\{' lab1/configs/lab/*.cfg
 ```
 
 Neutralise unwanted matches with [fixup rules](#fixup-rules). Text you add on purpose for Containerlab to fill in, such as the cookbook's `hostname {{ .LongName }}`, is expected to match. Prefer a [token file](#token-file) over an exported `CLOUDVISION_TOKEN`, or deploy from a shell where it is not set.
-
-Smaller steps of the same command, each leaving out more options:
-- **Topology without fixups:** omit `--fixup-rules` (and have no [user default rules](#user-default-fixup-rules)), or pass `--fixup-rules none`. No `configs/lab/` is written, and the topology boots the original configs directly: `startup-config: "configs/original/__clabNodeName__.cfg"`.
-- **LLDP report only:** omit `--fixup-rules`, `--lab-name` and `--image`. The configs are collected and the links are printed; no topology is written.
-- **Collection only:** additionally omit `--lldp`. `--output-dir` only collects the configs into `configs/original/`.
 
 ### Preview a selection: `--list`
 
