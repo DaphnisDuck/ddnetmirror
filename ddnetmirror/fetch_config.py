@@ -19,8 +19,9 @@ from ddnetmirror import fixup, images, lldp, topology
 from ddnetmirror.output import FetchError, ensure_absent, shown, write_new_file
 
 TOKEN_ENV = "CLOUDVISION_TOKEN"
-# under --output-dir: collected configs always, fixed-up startup configs with fixup rules
-COLLECTED, STARTUP = "configs/collected", "configs/startup"
+# under --output-dir: original (unchanged) configs always, lab configs (fixed-up copies used as
+# startup configs) with fixup rules
+ORIGINAL, LAB = "configs/original", "configs/lab"
 RPC_TIMEOUT = 30
 
 
@@ -574,15 +575,15 @@ def collect_tag(
     Containerlab topology for the saved configs (requires report_lldp); image is
     an image name (--image) or an images.Selector (the default).
 
-    Originals always go to output_dir/configs/collected. With fixup rules, a
-    transformed copy of each goes to output_dir/configs/startup; the topology
+    Originals always go to output_dir/configs/original. With fixup rules, a
+    transformed copy of each goes to output_dir/configs/lab; the topology
     then lists only devices with a startup config. A device whose fixup fails keeps its original and counts as
     failed. verbose prints per-device, per-rule fixup counts.
 
     force replaces existing regular files at the generated paths (one at a time,
     via a temporary file). A file whose write fails keeps its previous version,
     and a failed device never counts as this run's output. Files of that device
-    replaced before the failure (e.g. configs/collected/<name>.cfg when its fixup
+    replaced before the failure (e.g. configs/original/<name>.cfg when its fixup
     fails)
     are not restored: there is no rollback. Other files are never looked at.
 
@@ -592,10 +593,10 @@ def collect_tag(
     token = conn[2]
     device_ids = find_tagged_device_ids(conn, selected_tag, exclude)
     print(f"selected {len(device_ids)} device{'s' * (len(device_ids) != 1)} with tag {text}")
-    collected_dir = os.path.join(output_dir, COLLECTED)
-    os.makedirs(collected_dir, exist_ok=True)
+    original_dir = os.path.join(output_dir, ORIGINAL)
+    os.makedirs(original_dir, exist_ok=True)
     if rules:
-        os.makedirs(os.path.join(output_dir, STARTUP), exist_ok=True)
+        os.makedirs(os.path.join(output_dir, LAB), exist_ok=True)
     failures, fixup_failures = [], []
     startup = None if rules is None else set()  # names with a startup config
 
@@ -621,7 +622,7 @@ def collect_tag(
             check_safe_name(name, "")
             if names.count(name) > 1:
                 raise FetchError(f"hostname {name!r} is shared by several tagged devices")
-            output = os.path.join(collected_dir, f"{name}.cfg")
+            output = os.path.join(original_dir, f"{name}.cfg")
             ensure_absent(output, force)
             config = fetch_and_write(server, token, ca_bytes, device, name, output, force)
             saved[name] = device
@@ -631,7 +632,7 @@ def collect_tag(
             continue
         if rules:
             try:
-                write_startup(rules, name, config, os.path.join(output_dir, STARTUP, f"{name}.cfg"),
+                write_startup(rules, name, config, os.path.join(output_dir, LAB, f"{name}.cfg"),
                               verbose, force)
                 startup.add(name)
             except Exception as exc:  # the original stays; only this device is affected
@@ -639,11 +640,11 @@ def collect_tag(
 
     print(
         f"collected {written} of {len(device_ids)} devices with tag {text} "
-        f"into {collected_dir}; {len(failures)} failed"
+        f"into {original_dir}; {len(failures)} failed"
     )
     if rules:
         print(f"wrote {len(startup)} of {written} startup configs with fixups into "
-              f"{os.path.join(output_dir, STARTUP)}; {len(fixup_failures)} failed")
+              f"{os.path.join(output_dir, LAB)}; {len(fixup_failures)} failed")
     links, lldp_available = None, False
     if report_lldp:
         devices = []
@@ -676,8 +677,8 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
     """Write <lab>.clab.yml for the saved configs; return True if written.
 
     startup: names with a fixed-up startup config (None without fixups); only
-    those become nodes, referencing configs/startup/<name>.cfg; otherwise nodes
-    reference configs/collected/<name>.cfg.
+    those become nodes, referencing configs/lab/<name>.cfg; otherwise nodes
+    reference configs/original/<name>.cfg.
     """
     lab_name, image = lab
     if startup is not None:
@@ -723,7 +724,7 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
         image, overrides = choose_images(image, saved)
         header.append(f"Images: picked per device by EOS version from local {images.REPOSITORY} "
                       f"images; default is the most used, {image}. Not a compatibility check.")
-    config_dir = COLLECTED if startup is None else STARTUP  # relative to the topology file
+    config_dir = ORIGINAL if startup is None else LAB  # relative to the topology file
     text = topology.build(lab_name, image, saved, config_dir, endpoints, header, overrides)
     for reason in omitted:
         print(f"omitted link: {reason}", file=sys.stderr)
@@ -812,8 +813,8 @@ def build_parser(prog=None):
     outputs.add_argument("--output", help="output file (default: <device hostname>.cfg); never overwritten")
     outputs.add_argument(
         "--output-dir",
-        help="with --tag: collect every device with the tag into DIR/configs/collected "
-        "as <hostname>.cfg",
+        help="with --tag: collect every device with the tag into DIR/configs/original "
+        "as <hostname>.cfg, unchanged",
     )
     parser.add_argument(
         "--lldp",
@@ -836,7 +837,7 @@ def build_parser(prog=None):
         "--fixup-rules",
         metavar="RULES.yml",
         help="with --lab-name: write copies of the collected configs transformed by these "
-        "rules to DIR/configs/startup, and use those as startup configs. Default: "
+        "rules to DIR/configs/lab, and use those as startup configs. Default: "
         "$XDG_CONFIG_HOME/ddnetmirror/fixups.yml (~/.config/ddnetmirror/fixups.yml) if it "
         "exists; 'none' disables fixups",
     )
@@ -849,7 +850,7 @@ def build_parser(prog=None):
     parser.add_argument(
         "--force",
         action="store_true",
-        help="with --output-dir: replace existing generated files (collected and startup "
+        help="with --output-dir: replace existing generated files (original and lab "
         "configs, topology) instead of refusing; no backups, other files untouched",
     )
     return parser

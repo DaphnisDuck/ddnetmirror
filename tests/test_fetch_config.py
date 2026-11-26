@@ -527,7 +527,7 @@ def test_tag_expression_collects_with_a_selected_count(cv, tmp_path, capsys):
 
     assert run(selector=("--tag", "site=lab and not role=spine", "--output-dir", "lab")) == 0
 
-    assert sorted(p.name for p in (tmp_path / "lab/configs/collected").iterdir()) == [
+    assert sorted(p.name for p in (tmp_path / "lab/configs/original").iterdir()) == [
         "border1.cfg", "leaf1.cfg"]
     out = capsys.readouterr().out
     assert "selected 2 devices with tag site=lab and not role=spine" in out
@@ -553,7 +553,7 @@ def test_batch_collects_every_tagged_device(batch, tmp_path, capsys):
     assert run_batch() == 0
 
     for serial, name in batch["hostnames"].items():
-        path = tmp_path / "lab" / "configs" / "collected" / f"{name}.cfg"
+        path = tmp_path / "lab" / "configs" / "original" / f"{name}.cfg"
         assert path.read_bytes() == f"! {serial} café\r\nend".encode("utf-8")
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
     out = capsys.readouterr().out
@@ -568,7 +568,7 @@ def test_batch_keeps_successes_when_one_device_fails(batch, tmp_path, capsys):
 
     assert run_batch() == 1
 
-    assert sorted(p.name for p in (tmp_path / "lab" / "configs" / "collected").iterdir()) == [
+    assert sorted(p.name for p in (tmp_path / "lab" / "configs" / "original").iterdir()) == [
         "leaf1.cfg", "spine1.cfg",
     ]
     out = capsys.readouterr()
@@ -585,7 +585,7 @@ def test_batch_diagnostics_escape_control_characters(batch, tmp_path, capsys):
     out, err = capsys.readouterr()
     assert "failed: SN\\x1b[2J9: " in err and "\x1b" not in err
     assert "wrote running config for leaf\\x1b1 (SN1" in out and "\x1b" not in out
-    assert (tmp_path / "lab" / "configs" / "collected" / "leaf\x1b1.cfg").exists()  # name unchanged
+    assert (tmp_path / "lab" / "configs" / "original" / "leaf\x1b1.cfg").exists()  # name unchanged
 
 
 def test_batch_with_no_tagged_devices_fails(batch, tmp_path, capsys):
@@ -598,15 +598,15 @@ def test_batch_with_no_tagged_devices_fails(batch, tmp_path, capsys):
 
 
 def test_batch_never_overwrites_existing_file(batch, tmp_path, capsys):
-    (tmp_path / "lab" / "configs" / "collected").mkdir(parents=True)
-    existing = tmp_path / "lab" / "configs" / "collected" / "leaf2.cfg"
+    (tmp_path / "lab" / "configs" / "original").mkdir(parents=True)
+    existing = tmp_path / "lab" / "configs" / "original" / "leaf2.cfg"
     existing.write_text("keep me")
 
     assert run_batch() == 1
 
     assert existing.read_text() == "keep me"
     assert "SN2" not in batch["config_ids"]
-    assert (tmp_path / "lab" / "configs" / "collected" / "spine1.cfg").exists()
+    assert (tmp_path / "lab" / "configs" / "original" / "spine1.cfg").exists()
 
 
 @pytest.mark.parametrize(
@@ -622,7 +622,7 @@ def test_batch_rejects_unsafe_or_colliding_names(batch, tmp_path, capsys, hostna
     assert run_batch() == 1
 
     assert not any(serial in batch["config_ids"] for serial in rejected)
-    assert (tmp_path / "lab" / "configs" / "collected" / "spine1.cfg").exists()
+    assert (tmp_path / "lab" / "configs" / "original" / "spine1.cfg").exists()
     assert sorted(p.name for p in tmp_path.rglob("*.cfg")) == sorted(
         f"{batch['hostnames'][s]}.cfg" for s in batch["serials"] if s not in rejected
     )
@@ -791,7 +791,7 @@ topology:
   defaults:  # every node inherits these; override per node, e.g. "leaf1": {image: "..."}
     kind: ceos
     image: "ceos:4.35.7.2M"
-    startup-config: "configs/collected/__clabNodeName__.cfg"
+    startup-config: "configs/original/__clabNodeName__.cfg"
   nodes:
     "leaf1": {}
     "leaf2": {}
@@ -803,11 +803,11 @@ topology:
 """
     assert "site" not in text and "cv.example" not in text and TOKEN not in text
     # without fixups the topology uses the collected configs; nothing is copied
-    collected = tmp_path / "lab" / "configs" / "collected"
+    collected = tmp_path / "lab" / "configs" / "original"
     assert (collected / "leaf1.cfg").read_bytes() == "! SN1 café\r\nend".encode("utf-8")
     assert sorted(str(p.relative_to(tmp_path / "lab")) for p in (tmp_path / "lab").rglob("*")) == [
-        "configs", "configs/collected", "configs/collected/leaf1.cfg", "configs/collected/leaf2.cfg",
-        "configs/collected/spine1.cfg", "lab1.clab.yml",
+        "configs", "configs/original", "configs/original/leaf1.cfg", "configs/original/leaf2.cfg",
+        "configs/original/spine1.cfg", "lab1.clab.yml",
     ]
     out = capsys.readouterr().out
     assert "(3 nodes, 2 links)" in out
@@ -883,7 +883,7 @@ def test_topology_not_written_when_every_lldp_query_fails(batch, tmp_path, capsy
     assert run_topology() == 1
 
     assert not (tmp_path / "lab" / "lab1.clab.yml").exists()
-    assert sorted(p.name for p in (tmp_path / "lab" / "configs" / "collected").iterdir()) == [
+    assert sorted(p.name for p in (tmp_path / "lab" / "configs" / "original").iterdir()) == [
         "leaf1.cfg", "leaf2.cfg", "spine1.cfg",
     ]
     out, err = capsys.readouterr()
@@ -934,21 +934,21 @@ def test_fixups_write_startup_copies_used_by_topology(batch, tmp_path, capsys):
 
     out = tmp_path / "lab"
     for serial, name in batch["hostnames"].items():
-        original = out / "configs" / "collected" / f"{name}.cfg"
-        startup = out / "configs" / "startup" / f"{name}.cfg"
+        original = out / "configs" / "original" / f"{name}.cfg"
+        startup = out / "configs" / "lab" / f"{name}.cfg"
         assert original.read_bytes() == f"! {serial} café\r\nend".encode("utf-8")
         assert startup.read_bytes() == f"! lab-{serial} café\r\nend".encode("utf-8")
         assert stat.S_IMODE(startup.stat().st_mode) == 0o600
     assert sorted(p.name for p in out.iterdir()) == ["configs", "lab1.clab.yml"]
-    assert sorted(p.name for p in (out / "configs").iterdir()) == ["collected", "startup"]
+    assert sorted(p.name for p in (out / "configs").iterdir()) == ["lab", "original"]
     text = (out / "lab1.clab.yml").read_text()
     assert "\n# 3 of 3 devices with a fixed-up startup config; 1 links.\n" in text
     assert [line.strip() for line in text.splitlines() if "startup-config" in line] == [
-        'startup-config: "configs/startup/__clabNodeName__.cfg"',
+        'startup-config: "configs/lab/__clabNodeName__.cfg"',
     ]
     parsed = yaml.safe_load(text)["topology"]
     assert parsed["defaults"] == {
-        "kind": "ceos", "image": "ceos:4.35.7.2M", "startup-config": "configs/startup/__clabNodeName__.cfg",
+        "kind": "ceos", "image": "ceos:4.35.7.2M", "startup-config": "configs/lab/__clabNodeName__.cfg",
     }
     assert parsed["nodes"] == {"leaf1": {}, "leaf2": {}, "spine1": {}}
     assert text.endswith(
@@ -971,7 +971,7 @@ def test_verbose_fixups_report_each_rule_per_device(batch, tmp_path, capsys):
     for name in batch["hostnames"].values():
         assert (f"fixup {name}: rule 1 replace: 1 line(s) affected (1 line(s) replaced)\n"
                 f"fixup {name}: rule 2 delete-block: 0 line(s) affected (0 block(s) removed)\n") in out
-    assert (tmp_path / "lab" / "configs" / "startup" / "leaf1.cfg").read_bytes() == "! lab-SN1 café\r\nend".encode()
+    assert (tmp_path / "lab" / "configs" / "lab" / "leaf1.cfg").read_bytes() == "! lab-SN1 café\r\nend".encode()
 
 
 @pytest.mark.parametrize("failure", ["rule error", "existing startup file"])
@@ -985,7 +985,7 @@ def test_fixup_failure_keeps_original_and_drops_only_that_node(
         "SN2": [nbr("Ethernet12", "spine1", "Ethernet50/1")],
         "SN3": [port("Ethernet49/1"), port("Ethernet50/1")],
     }
-    startup = tmp_path / "lab" / "configs" / "startup"
+    startup = tmp_path / "lab" / "configs" / "lab"
     if failure == "rule error":
         apply_rules = fixup.apply_rules
 
@@ -1001,7 +1001,7 @@ def test_fixup_failure_keeps_original_and_drops_only_that_node(
 
     assert run_fixups(tmp_path) == 1
 
-    collected = tmp_path / "lab" / "configs" / "collected" / "leaf2.cfg"
+    collected = tmp_path / "lab" / "configs" / "original" / "leaf2.cfg"
     assert collected.read_bytes() == "! SN2 café\r\nend".encode("utf-8")
     if failure == "rule error":
         assert not (startup / "leaf2.cfg").exists()
@@ -1029,9 +1029,9 @@ def test_insert_before_anchor_in_fetch_workflow(batch, tmp_path, capsys):
     assert run_fixups(tmp_path, rules) == 1
 
     configs = tmp_path / "lab" / "configs"
-    assert (configs / "startup" / "leaf1.cfg").read_bytes() == "! SN1 café\r\nmaintenance\r\nend".encode()
-    assert not (configs / "startup" / "leaf2.cfg").exists()
-    assert (configs / "collected" / "leaf2.cfg").exists()
+    assert (configs / "lab" / "leaf1.cfg").read_bytes() == "! SN1 café\r\nmaintenance\r\nend".encode()
+    assert not (configs / "lab" / "leaf2.cfg").exists()
+    assert (configs / "original" / "leaf2.cfg").exists()
     assert ("failed: leaf2 (SN2): fixup failed, original kept: rule 1 insert-if-missing: "
             "before '^end$' matches 2 lines") in capsys.readouterr().err
 
@@ -1095,7 +1095,7 @@ def test_user_default_fixup_rules_apply_without_fixup_rules(batch, tmp_path, cap
 
     assert run(selector=TOPOLOGY_ARGS) == 0
 
-    startup = tmp_path / "lab" / "configs" / "startup" / "leaf1.cfg"
+    startup = tmp_path / "lab" / "configs" / "lab" / "leaf1.cfg"
     assert startup.read_bytes() == "! lab-SN1 café\r\nend".encode()
     assert path.read_text() == FIXUP_RULES  # only read
     assert f"fixup rules: {path} (user default)\n" in capsys.readouterr().out
@@ -1108,7 +1108,7 @@ def test_explicit_fixup_rules_win_over_the_user_default(batch, tmp_path, capsys)
 
     assert run("--fixup-rules", "rules.yml", selector=TOPOLOGY_ARGS) == 0
 
-    startup = tmp_path / "lab" / "configs" / "startup" / "leaf1.cfg"
+    startup = tmp_path / "lab" / "configs" / "lab" / "leaf1.cfg"
     assert startup.read_bytes() == "! explicit-SN1 café\r\nend".encode()
     assert "fixup rules: rules.yml (--fixup-rules)\n" in capsys.readouterr().out
 
@@ -1125,9 +1125,9 @@ def test_none_or_no_user_default_means_no_fixups(batch, tmp_path, capsys, user_f
 
     assert run(*extra, selector=TOPOLOGY_ARGS) == 0
 
-    assert not (tmp_path / "lab" / "configs" / "startup").exists()
+    assert not (tmp_path / "lab" / "configs" / "lab").exists()
     text = (tmp_path / "lab" / "lab1.clab.yml").read_text()
-    assert 'startup-config: "configs/collected/__clabNodeName__.cfg"' in text
+    assert 'startup-config: "configs/original/__clabNodeName__.cfg"' in text
     out = capsys.readouterr().out
     assert f"fixup rules: none ({reason.format(xdg=tmp_path / 'xdg')})\n" in out
 
@@ -1206,7 +1206,7 @@ def test_force_regenerates_lab_and_leaves_other_files(batch, tmp_path, capsys, e
     batch["lldp"] = {"SN1": [nbr("Ethernet1", "spine1", "Ethernet49/1")], "SN3": [port("Ethernet49/1")]}
     assert run_fixups(tmp_path) == 0
     out = tmp_path / "lab"
-    (out / "configs" / "startup" / "leaf1.cfg").write_text("edited by hand")
+    (out / "configs" / "lab" / "leaf1.cfg").write_text("edited by hand")
     (out / "notes.txt").write_text("mine")
     previous = files(out)
 
@@ -1220,20 +1220,41 @@ def test_force_regenerates_lab_and_leaves_other_files(batch, tmp_path, capsys, e
 
     assert code == 1  # leaf2 failed
     now = files(out)
-    assert now["configs/collected/leaf1.cfg"] == b"! SN1 new\nend\n"
-    assert now["configs/startup/leaf1.cfg"] == b"! lab-SN1 new\nend\n"  # manual edit replaced
-    for kept in ["configs/collected/leaf2.cfg", "configs/startup/leaf2.cfg",  # failed: previous kept
-                 "configs/collected/spine1.cfg", "configs/startup/spine1.cfg",  # stale
+    assert now["configs/original/leaf1.cfg"] == b"! SN1 new\nend\n"
+    assert now["configs/lab/leaf1.cfg"] == b"! lab-SN1 new\nend\n"  # manual edit replaced
+    for kept in ["configs/original/leaf2.cfg", "configs/lab/leaf2.cfg",  # failed: previous kept
+                 "configs/original/spine1.cfg", "configs/lab/spine1.cfg",  # stale
                  "notes.txt"]:  # unrelated
         assert now[kept] == previous[kept]
     assert set(now) == set(previous)  # no temp files, no backups
-    for name in ["configs/collected/leaf1.cfg", "configs/startup/leaf1.cfg", "lab1.clab.yml"]:
+    for name in ["configs/original/leaf1.cfg", "configs/lab/leaf1.cfg", "lab1.clab.yml"]:
         assert stat.S_IMODE((out / name).stat().st_mode) == 0o600
     topo = now["lab1.clab.yml"].decode()
     assert yaml.safe_load(topo)["topology"]["nodes"] == {"leaf1": {}}
     assert "# 1 of 2 devices with a fixed-up startup config; 0 links." in topo
     assert "INCOMPLETE" in topo
     assert "failed: leaf2 (SN2)" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("fixups", [True, False])
+def test_legacy_collected_and_startup_dirs_are_left_alone(batch, tmp_path, fixups):
+    batch["lldp"] = {"SN1": [port("Ethernet1")]}
+    out = tmp_path / "lab"
+    legacy = ["configs/collected/leaf1.cfg", "configs/startup/leaf1.cfg"]
+    for name in legacy:
+        (out / name).parent.mkdir(parents=True, exist_ok=True)
+        (out / name).write_text(f"old {name}")
+
+    code = run_fixups(tmp_path, FIXUP_RULES, "--force") if fixups else run(
+        "--force", selector=TOPOLOGY_ARGS)
+
+    assert code == 0
+    for name in legacy:  # not renamed, replaced or removed
+        assert (out / name).read_text() == f"old {name}"
+    new = "lab" if fixups else "original"
+    assert sorted(p.name for p in (out / "configs").iterdir()) == sorted(
+        ["collected", "startup", "original"] + ["lab"] * fixups)
+    assert f'startup-config: "configs/{new}/__clabNodeName__.cfg"' in (out / "lab1.clab.yml").read_text()
 
 
 def test_ddn_build_refuses_existing_files_unless_forced(batch, tmp_path, monkeypatch, capsys):
@@ -1249,8 +1270,8 @@ def test_ddn_build_refuses_existing_files_unless_forced(batch, tmp_path, monkeyp
     assert cli.main(["build"]) == 0
     assert capsys.readouterr().out.endswith(f"containerlab deploy -t '{topology_file}'\n")
     built = files(project)
-    assert set(built) == {"ddnetmirror.yml", "notes.txt", "lab1.clab.yml", "configs/collected/leaf1.cfg",
-                          "configs/collected/leaf2.cfg", "configs/collected/spine1.cfg"}
+    assert set(built) == {"ddnetmirror.yml", "notes.txt", "lab1.clab.yml", "configs/original/leaf1.cfg",
+                          "configs/original/leaf2.cfg", "configs/original/spine1.cfg"}
 
     calls = len(batch["config_ids"])
     assert cli.main(["build"]) == 1  # refused before any collection, nothing changed
@@ -1261,7 +1282,7 @@ def test_ddn_build_refuses_existing_files_unless_forced(batch, tmp_path, monkeyp
     assert cli.main(["build", "--force"]) == 0
     assert "containerlab deploy -t" in capsys.readouterr().out
     now = files(project)
-    assert now["configs/collected/leaf1.cfg"] == b"! SN1 new\nend\n"
+    assert now["configs/original/leaf1.cfg"] == b"! SN1 new\nend\n"
     assert now["notes.txt"] == b"mine" and set(now) == set(built)
 
     topology_file.unlink()
@@ -1273,8 +1294,8 @@ def test_ddn_build_refuses_existing_files_unless_forced(batch, tmp_path, monkeyp
 
 @pytest.mark.parametrize("failure", ["write", "rename"])
 def test_force_failed_replacement_keeps_previous_file(batch, tmp_path, monkeypatch, failure):
-    (tmp_path / "lab" / "configs" / "collected").mkdir(parents=True)
-    previous = tmp_path / "lab" / "configs" / "collected" / "leaf1.cfg"
+    (tmp_path / "lab" / "configs" / "original").mkdir(parents=True)
+    previous = tmp_path / "lab" / "configs" / "original" / "leaf1.cfg"
     previous.write_text("previous complete config")
     real_fdopen, real_replace = os.fdopen, os.replace
 
@@ -1297,14 +1318,14 @@ def test_force_failed_replacement_keeps_previous_file(batch, tmp_path, monkeypat
     assert run(selector=("--tag", "site=lab", "--output-dir", "lab", "--force")) == 1
 
     assert previous.read_text() == "previous complete config"
-    names = sorted(p.name for p in (tmp_path / "lab" / "configs" / "collected").iterdir())
+    names = sorted(p.name for p in (tmp_path / "lab" / "configs" / "original").iterdir())
     assert names == (["leaf1.cfg"] if failure == "write" else ["leaf1.cfg", "leaf2.cfg", "spine1.cfg"])
 
 
 def test_force_refuses_symlinks_and_non_regular_files(batch, tmp_path, capsys):
     batch["lldp"] = {"SN1": [port("Ethernet1")]}
     out = tmp_path / "lab"
-    collected = out / "configs" / "collected"
+    collected = out / "configs" / "original"
     collected.mkdir(parents=True)
     target = tmp_path / "elsewhere.cfg"
     target.write_text("not ours")
@@ -1319,7 +1340,7 @@ def test_force_refuses_symlinks_and_non_regular_files(batch, tmp_path, capsys):
 
     assert run(selector=("--tag", "site=lab", "--output-dir", "lab", "--force")) == 1
     assert (collected / "leaf1.cfg").is_symlink() and target.read_text() == "not ours"
-    assert "lab/configs/collected/leaf1.cfg is a symbolic link; not replacing it" in capsys.readouterr().err
+    assert "lab/configs/original/leaf1.cfg is a symbolic link; not replacing it" in capsys.readouterr().err
     assert (collected / "leaf2.cfg").exists() and (collected / "spine1.cfg").exists()
 
 
@@ -1328,9 +1349,9 @@ def test_force_never_touches_unrelated_files_or_directories(batch, tmp_path):
     assert run_fixups(tmp_path) == 0
     out = tmp_path / "lab"
     unrelated = ["notes.txt", "mine/plan.txt", "configs/notes.txt", "configs/other/leaf1.cfg",
-                 "configs/collected/notes.txt", "configs/collected/old/leaf1.cfg",
-                 "configs/startup/README", "configs/startup/keep/leaf2.cfg",
-                 "configs/collected/spine1.cfg", "configs/startup/spine1.cfg"]  # spine1: no longer selected
+                 "configs/original/notes.txt", "configs/original/old/leaf1.cfg",
+                 "configs/lab/README", "configs/lab/keep/leaf2.cfg",
+                 "configs/original/spine1.cfg", "configs/lab/spine1.cfg"]  # spine1: no longer selected
     for name in unrelated[:-2]:
         (out / name).parent.mkdir(exist_ok=True)
         (out / name).write_text(f"user file {name}")
@@ -1338,7 +1359,7 @@ def test_force_never_touches_unrelated_files_or_directories(batch, tmp_path):
         os.utime(out / name, ns=(10**18, 10**18))  # a fixed past time, to detect any rewrite
     before = {name: ((out / name).read_bytes(), (out / name).stat().st_mtime_ns) for name in unrelated}
     dirs = {d: sorted(p.name for p in (out / d).iterdir())
-            for d in ["mine", "configs/other", "configs/collected/old", "configs/startup/keep"]}
+            for d in ["mine", "configs/other", "configs/original/old", "configs/lab/keep"]}
 
     batch["tagged"] = ["SN1", "SN2"]
     for serial in batch["tagged"]:
@@ -1348,8 +1369,8 @@ def test_force_never_touches_unrelated_files_or_directories(batch, tmp_path):
     after = {name: ((out / name).read_bytes(), (out / name).stat().st_mtime_ns) for name in unrelated}
     assert after == before
     assert {d: sorted(p.name for p in (out / d).iterdir()) for d in dirs} == dirs
-    assert (out / "configs" / "collected" / "leaf1.cfg").read_text() == "! SN1 regenerated\nend\n"
-    assert (out / "configs" / "startup" / "leaf2.cfg").read_text() == "! lab-SN2 regenerated\nend\n"
+    assert (out / "configs" / "original" / "leaf1.cfg").read_text() == "! SN1 regenerated\nend\n"
+    assert (out / "configs" / "lab" / "leaf2.cfg").read_text() == "! lab-SN2 regenerated\nend\n"
     assert yaml.safe_load((out / "lab1.clab.yml").read_text())["topology"]["nodes"] == {
         "leaf1": {}, "leaf2": {},
     }
@@ -1365,7 +1386,7 @@ def test_force_regenerates_lab_with_longest_file_name(batch, tmp_path):
 
     assert run("--force", selector=argv) == 0
 
-    collected = tmp_path / "lab" / "configs" / "collected"
+    collected = tmp_path / "lab" / "configs" / "original"
     assert (collected / "leaf1.cfg").read_text() == "! SN1 regenerated\nend\n"
     assert (tmp_path / "lab" / f"{lab}.clab.yml").exists()
     assert not [p for p in (tmp_path / "lab").iterdir() if p.name.startswith(".")]
