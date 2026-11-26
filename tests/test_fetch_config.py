@@ -500,6 +500,11 @@ def test_plain_tag_without_operator_words_is_unchanged():
     assert fetch_config.parse_tag("and=or")[1] == ("tag", "and", "or")  # operators only as words
 
 
+def test_operator_word_in_a_plain_value_makes_the_rest_bare_keys():
+    assert fetch_config.parse_tag("description=research and development")[1] == (
+        "and", ("tag", "description", "research"), ("tag", "development", None))
+
+
 @pytest.mark.parametrize("expression", [
     "(site=lab OR site=dr) AND NOT role=spine",
     "(site=lab Or site=dr) aNd nOt role=spine",
