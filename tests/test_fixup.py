@@ -1,4 +1,6 @@
+import re
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -344,3 +346,49 @@ def test_check_rejects_input_and_output_arguments(tmp_path, capsys):
     assert exc.value.code == 2
     assert "--check takes only a rule file" in capsys.readouterr().err
     assert list(tmp_path.iterdir()) == []
+
+
+COOKBOOK = Path(__file__).resolve().parent.parent / "examples" / "fixups.yml"
+COOKBOOK_SAMPLE = (
+    "! device: leaf1 (synthetic)\n"
+    "username ops privilege 15 role network-admin secret sha512 $6$synthetic$x\n"
+    "username ops ssh-key ssh-ed25519 AAAAsynthetic ops@example\n"
+    "!\n"
+    "daemon ExampleAgent\n"
+    "   exec /usr/bin/true\n"
+    "!\n"
+    "!\n"
+    "hostname leaf1\n"
+    "logging host 192.0.2.50\n"
+    "ip name-server 192.0.2.10\n"
+    "!\n"
+    "interface Ethernet1\n"
+    "   description uplink\n"
+    "!\n"
+    "end\n"
+)
+
+
+def test_cookbook_as_shipped_is_a_valid_no_op():
+    assert apply(COOKBOOK.read_text(), COOKBOOK_SAMPLE) == COOKBOOK_SAMPLE
+
+
+def test_cookbook_recipes_uncommented_apply_as_documented():
+    # Recipe lines are "#" directly followed by YAML: "#- op: ..." or "#  field: ...".
+    enabled = re.sub(r"(?m)^#(?=- |  )", "", COOKBOOK.read_text())
+    assert apply(enabled, COOKBOOK_SAMPLE) == (
+        "! device: leaf1 (synthetic)\n"
+        "!\n"
+        "hostname {{ .LongName }}\n"
+        "ip name-server 198.51.100.10\n"
+        "!\n"
+        "interface Ethernet1\n"
+        "   description [lab] uplink\n"
+        "!\n"
+        "username admin privilege 15 role network-admin secret admin\n"
+        "banner motd\n"
+        "Synthetic lab copy. Not production.\n"
+        "EOF\n"
+        "!\n"
+        "end\n"
+    )

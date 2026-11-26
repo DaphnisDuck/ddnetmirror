@@ -376,6 +376,12 @@ Check a rule file without touching any config:
 
 ## Fixup rules
 
+### Example cookbook
+
+[`examples/fixups.yml`](examples/fixups.yml) is an annotated, opt-in rule file. It shows every operation, regex capture groups and `insert-if-missing` with `before`, plus two lab recipes: a hostname that follows the Containerlab node name (`hostname {{ .LongName }}`, which Containerlab fills in at deploy time) and a lab-only `admin`/`admin` local user. Every example rule is commented out. The one active rule changes nothing, so the file is valid as shipped. ddnetmirror never installs or applies this file on its own.
+
+To use it, copy it (for example to `rules.yml` in your lab directory, or to the [user default](#user-default-fixup-rules) path), remove the leading `#` from the recipe lines you want, edit them, then run `ddn fixup --check` and pass the file with `--fixup-rules` or `fixup-rules:` in `ddnetmirror.yml`.
+
 ### User default fixup rules
 
 To avoid copying a rule file into every lab, put your own rules in `$XDG_CONFIG_HOME/ddnetmirror/fixups.yml` (default `~/.config/ddnetmirror/fixups.yml`). `ddn fetch … --lab-name` picks its rules like this:
