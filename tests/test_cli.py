@@ -65,3 +65,13 @@ def test_leading_double_dash_reaches_the_subcommand(tmp_path, capsys):
     assert results[0] == results[1]
     assert results[0][0] == 2 and "unrecognized arguments: --rules" in results[0][1]
     assert not (tmp_path / "out.cfg").exists()
+
+
+def test_version_comes_from_package_metadata(capsys, monkeypatch):
+    monkeypatch.setattr(fetch_config.importlib.metadata, "version", lambda name: "9.8.7")
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--version"])
+
+    assert exc.value.code == 0
+    assert capsys.readouterr().out == "ddn 9.8.7\n"

@@ -4,6 +4,7 @@ import contextlib
 import os
 import stat
 import tempfile
+import unicodedata
 
 
 class FetchError(Exception):
@@ -76,8 +77,15 @@ def ensure_absent(path, force=False):
 
 
 def shown(value):
-    """Escape control characters (C0, DEL, C1) in an LLDP value for display."""
-    return "".join(
-        f"\\x{ord(c):02x}" if ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F else c
-        for c in str(value)
-    )
+    """Escape control characters (C0, DEL, C1) and invisible format characters
+    (Unicode category Cf: bidi controls, zero-width characters) for display."""
+    return "".join(_escaped(c) for c in str(value))
+
+
+def _escaped(c):
+    code = ord(c)
+    if code < 0x20 or 0x7F <= code <= 0x9F:
+        return f"\\x{code:02x}"
+    if unicodedata.category(c) == "Cf":
+        return f"\\u{code:04x}" if code <= 0xFFFF else f"\\U{code:08x}"
+    return c

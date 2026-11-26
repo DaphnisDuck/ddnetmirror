@@ -5,10 +5,13 @@ repository `ceos`. It says nothing about whether a config runs on an image: no
 compatibility analysis.
 """
 
+import os
 import re
 import subprocess
 
 REPOSITORY = "ceos"
+# never passed to the docker command (same name as fetch_config.TOKEN_ENV)
+CREDENTIAL_ENV = ("CLOUDVISION_TOKEN",)
 DOCKER_TIMEOUT = 30  # seconds
 # MAJOR.MINOR.PATCH[.BUILD][LETTERS], e.g. 4.35.7.2M, 4.32.1F
 VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?([A-Za-z]*)")
@@ -32,8 +35,10 @@ def parse_version(text):
 def local_tags(repository):
     """Return the tags of local Docker images in repository (no pulls, no registry)."""
     command = ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}", repository]
+    env = {k: v for k, v in os.environ.items() if k not in CREDENTIAL_ENV}
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=DOCKER_TIMEOUT)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=DOCKER_TIMEOUT,
+                                env=env)
     except FileNotFoundError:
         raise ImageError("picking images needs the docker command, which was not found "
                          "(or pass --image IMAGE)") from None

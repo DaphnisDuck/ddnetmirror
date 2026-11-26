@@ -19,6 +19,8 @@ def build_parser():
         epilog="commands:\n" + "\n".join(f"  {n:8}{h}" for n, (_, h) in COMMANDS.items()),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action="version",
+                        version=f"%(prog)s {fetch_config.package_version()}")
     parser.add_argument("command", choices=COMMANDS, metavar="COMMAND", help="fetch, fixup or build")
     return parser
 

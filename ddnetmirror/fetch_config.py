@@ -394,9 +394,19 @@ def parse_lab_name(text):
 
 
 def parse_server(server):
-    host, sep, port = server.rpartition(":")
-    if not sep:
-        return server, 443
+    """HOST, HOST:PORT, [IPV6] or [IPV6]:PORT -> (host, port); an IPv6 host is unbracketed."""
+    if server.startswith("["):
+        host, sep, rest = server[1:].partition("]")
+        if not sep or not host or (rest and not rest.startswith(":")):
+            raise FetchError(f"invalid --server {server!r} (use [IPV6-ADDRESS]:PORT)")
+        port = rest[1:] if rest else "443"
+    elif server.count(":") > 1:
+        raise FetchError(f"--server {server!r}: put an IPv6 address in brackets, "
+                         "as [IPV6-ADDRESS] or [IPV6-ADDRESS]:PORT")
+    else:
+        host, sep, port = server.rpartition(":")
+        if not sep:
+            host, port = server, "443"
     if not port.isdigit():
         raise FetchError(f"invalid port in --server {server!r}")
     return host, int(port)
@@ -430,7 +440,7 @@ def run(args, base_dir=None):
         with open(args.ca_file, "rb") as f:
             ca_bytes = f.read()
     conn = (host, port, token, args.ca_file)
-    server = f"{host}:{port}"
+    server = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
 
     if args.list:
         return list_selection(conn, args.hostname, args.tag, args.exclude_host)
@@ -596,9 +606,7 @@ def collect_tag(
     device_ids = find_tagged_device_ids(conn, selected_tag, exclude)
     print(f"selected {len(device_ids)} device{'s' * (len(device_ids) != 1)} with tag {text}")
     original_dir = os.path.join(output_dir, ORIGINAL)
-    os.makedirs(original_dir, exist_ok=True)
-    if rules:
-        os.makedirs(os.path.join(output_dir, LAB), exist_ok=True)
+    make_config_dirs(output_dir, [ORIGINAL] + ([LAB] if rules else []))
     failures, fixup_failures = [], []
     startup = None if rules is None else set()  # names with a startup config
 
@@ -622,8 +630,9 @@ def collect_tag(
         label_for_report = f"{name} ({device.key.device_id})"
         try:
             check_safe_name(name, "")
-            if names.count(name) > 1:
-                raise FetchError(f"hostname {name!r} is shared by several tagged devices")
+            if [n.casefold() for n in names].count(name.casefold()) > 1:
+                raise FetchError(f"hostname {name!r} is shared by several tagged devices "
+                                 "(compared ignoring case)")
             output = os.path.join(original_dir, f"{name}.cfg")
             ensure_absent(output, force)
             config = fetch_and_write(server, token, ca_bytes, device, name, output, force)
@@ -648,14 +657,18 @@ def collect_tag(
         print(f"wrote {len(startup)} of {written} startup configs with fixups into "
               f"{os.path.join(output_dir, LAB)}; {len(fixup_failures)} failed")
     links, lldp_available, unavailable = None, False, []
+    no_hostname = []
     if report_lldp:
         devices = []
         for _, device in found:
             if device.hostname:
                 devices.append((device.hostname, device.key.device_id))
             else:
-                print(f"skipped LLDP: {shown(device.key.device_id)}: no inventory hostname",
-                      file=sys.stderr)
+                no_hostname.append(device.key.device_id)
+        if no_hostname:
+            print(f"error: no inventory hostname, so no LLDP links or topology node "
+                  f"(config saved as <serial>.cfg): "
+                  f"{', '.join(shown(i) for i in no_hostname)}", file=sys.stderr)
         try:
             links, lldp_available, unavailable = lldp.report_links(
                 server, token, conn[3], devices
@@ -666,8 +679,11 @@ def collect_tag(
             print(f"error: LLDP data unavailable for {len(unavailable)} of {len(devices)} "
                   f"devices, so their links are missing: "
                   f"{', '.join(shown(h) for h in unavailable)}", file=sys.stderr)
+        elif links is not None and not lldp_available:
+            what = f"all {len(devices)} queried devices" if devices else "any device (none queried)"
+            print(f"error: LLDP data unavailable for {what}; no links are known", file=sys.stderr)
     complete = not failures and not fixup_failures
-    if report_lldp and (links is None or not lldp_available or unavailable):
+    if report_lldp and (links is None or not lldp_available or unavailable or no_hostname):
         complete = False
     if lab:
         written_topology = False
@@ -683,6 +699,18 @@ def collect_tag(
                       "not match the configs written now", file=sys.stderr)
         return written_topology and complete
     return complete
+
+
+def make_config_dirs(output_dir, subdirs):
+    """Create output_dir (default mode) and its configs subdirectories.
+
+    A configs directory created here is owner-only (0700); an existing
+    directory is used as it is, never chmod-ed."""
+    os.makedirs(output_dir, exist_ok=True)
+    for sub in ("configs", *subdirs):
+        path = os.path.join(output_dir, sub)
+        if not os.path.isdir(path):
+            os.mkdir(path, 0o700)
 
 
 def package_version():
@@ -714,9 +742,13 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
     if not saved:
         return refuse("no device config was saved" if startup is None
                       else "no startup config was written")
-    bad = sorted(
-        n for n, d in saved.items() if not d.hostname or not topology.valid_name(n)
-    )
+    unnamed = sorted(n for n, d in saved.items() if not d.hostname)
+    if unnamed:
+        return refuse(
+            "devices without an inventory hostname (a node needs one; config saved as "
+            "<serial>.cfg): " + ", ".join(shown(n) for n in unnamed)
+        )
+    bad = sorted(n for n in saved if not topology.valid_name(n))
     if bad:
         return refuse(
             "not valid Containerlab node names (inventory hostnames are used as-is): "
@@ -805,7 +837,8 @@ def build_parser(prog=None):
         f"The service-account token is read from --token-file, else from {TOKEN_ENV}, "
         "else from $XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token)."
     )
-    parser.add_argument("--server", required=True, help="CloudVision host[:port] (default port 443)")
+    parser.add_argument("--server", required=True, help="CloudVision HOST[:PORT] (default port 443); an IPv6 address in brackets, "
+                        "[IPV6-ADDRESS][:PORT]")
     selector = parser.add_mutually_exclusive_group(required=True)
     selector.add_argument(
         "--hostname", help="device hostname as shown in CloudVision inventory (any case)"
@@ -934,6 +967,9 @@ def main(argv=None, prog=None, base_dir=None):
     except (FetchError, OSError) as exc:
         print(f"error: {shown(exc)}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
     if not complete:
         return 1
     if args.lab_name:  # complete: every selected device and its LLDP links are in the topology

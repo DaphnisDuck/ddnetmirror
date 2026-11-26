@@ -26,7 +26,8 @@ class ProjectError(Exception):
 def load_project(directory="."):
     """Read and validate directory/ddnetmirror.yml; return a dict of strings.
 
-    Relative cacert and fixup-rules paths are relative to directory. Only
+    A leading ~ in cacert and fixup-rules is expanded; relative paths are
+    relative to directory. Only
     reads the file: no Docker or CloudVision access.
     """
     path = os.path.join(directory, PROJECT_FILE)
@@ -63,6 +64,9 @@ def load_project(directory="."):
         raise ProjectError(f"{path}: image: auto is not needed; leave image out to pick "
                            "local ceos images by EOS version")
     project = dict(spec)
+    for key in ("cacert", "fixup-rules"):
+        if key in project and project[key].startswith("~"):
+            project[key] = os.path.expanduser(project[key])
     if "cacert" in project:
         project["cacert"] = os.path.join(directory, project["cacert"])  # absolute stays
     return project
@@ -125,6 +129,9 @@ def main(argv=None, prog=None):
     except ProjectError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
     try:
         return fetch_config.main(fetch_args(project, directory, args.token_file, args.force),
                                  prog=prog, base_dir=directory)

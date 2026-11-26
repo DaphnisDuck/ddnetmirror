@@ -244,6 +244,16 @@ def build_parser(prog=None):
     return parser
 
 
+def read_utf8(path):
+    """Return the UTF-8 text of path; a decoding error names the file."""
+    with open(path, "rb") as f:
+        data = f.read()
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise FetchError(f"{path}: not UTF-8 text ({exc})") from None
+
+
 def main(argv=None, prog=None):
     parser = build_parser(prog)
     args = parser.parse_args(argv)
@@ -251,14 +261,16 @@ def main(argv=None, prog=None):
         if (args.input, args.rules, args.output) != (None, None, None):
             parser.error("--check takes only a rule file (no input, --rules or --output)")
         try:
-            with open(args.check, encoding="utf-8") as f:
-                rules = load_rules(f.read())
+            rules = load_rules(read_utf8(args.check))
         except RuleError as exc:
             print(f"error: {args.check}: {exc}", file=sys.stderr)
             return 1
-        except (OSError, UnicodeDecodeError) as exc:
+        except (FetchError, OSError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+        except KeyboardInterrupt:
+            print("interrupted", file=sys.stderr)
+            return 130
         print(f"{args.check}: {len(rules)} rule(s) OK")
         return 0
     missing = [name for name, value in
@@ -267,18 +279,19 @@ def main(argv=None, prog=None):
     if missing:
         parser.error(f"the following arguments are required: {', '.join(missing)}")
     try:
-        with open(args.rules, encoding="utf-8") as f:
-            rules = load_rules(f.read())
-        with open(args.input, "rb") as f:
-            text = f.read().decode("utf-8")
+        rules = load_rules(read_utf8(args.rules))
+        text = read_utf8(args.input)
         result = apply_rules(rules, text, verbose=args.verbose)
         write_new_file(args.output, result)
     except RuleError as exc:
         print(f"error: {args.rules}: {exc}", file=sys.stderr)
         return 1
-    except (FetchError, OSError, UnicodeDecodeError) as exc:
+    except (FetchError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
     print(f"wrote {args.output}")
     return 0
 
