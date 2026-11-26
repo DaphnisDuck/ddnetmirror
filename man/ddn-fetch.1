@@ -53,8 +53,8 @@ output file (default: <device hostname>.cfg); never overwritten
 
 .TP
 \fB\-\-output\-dir\fR \fI\,OUTPUT_DIR\/\fR
-with \-\-tag: collect every device with the tag into DIR/configs/collected as
-<hostname>.cfg
+with \-\-tag: collect every device with the tag into DIR/configs/original as
+<hostname>.cfg, unchanged
 
 .TP
 \fB\-\-lldp\fR
@@ -73,7 +73,7 @@ Docker; version matching only, not a compatibility check)
 .TP
 \fB\-\-fixup\-rules\fR \fI\,RULES.yml\/\fR
 with \-\-lab\-name: write copies of the collected configs transformed by these
-rules to DIR/configs/startup, and use those as startup configs. Default:
+rules to DIR/configs/lab, and use those as startup configs. Default:
 $XDG_CONFIG_HOME/ddnetmirror/fixups.yml (~/.config/ddnetmirror/fixups.yml) if
 it exists; 'none' disables fixups
 
@@ -84,8 +84,8 @@ never prints config text
 
 .TP
 \fB\-\-force\fR
-with \-\-output\-dir: replace existing generated files (collected and startup
-configs, topology) instead of refusing; no backups, other files untouched
+with \-\-output\-dir: replace existing generated files (original and lab configs,
+topology) instead of refusing; no backups, other files untouched
 
 .SH DISTRIBUTION
 The latest version of ddnetmirror may be downloaded from
