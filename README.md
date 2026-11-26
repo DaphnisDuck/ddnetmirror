@@ -142,7 +142,7 @@ wrote Containerlab topology lab1/lab1.clab.yml (4 nodes, 5 links)
 
 CloudVision inventory can include third-party devices (for example Cisco switches) that have no EOS running config. ddnetmirror only ever selects **eligible EOS devices**: devices that carry CloudVision's **system-generated `eos` tag**, with any value (the value isn't read).
 
-- **Everywhere.** `--hostname`, `--tag` (including the universe of `not`), `--list`, `--exclude-host`, collection, LLDP, the topology and `ddn up` all use only eligible devices. A non-EOS device's config is never fetched, it never becomes a node, and LLDP links to it are skipped as `not in selection`. A Boolean expression can't bring one back in: `not role=spine` and `not eos=x` cover eligible EOS devices only.
+- **Everywhere.** `--hostname`, `--tag` (including the universe of `not`), `--list`, `--exclude-host`, collection, LLDP, the topology and `ddn up` all use only eligible devices. A non-EOS device's config is never fetched, it never becomes a node, and LLDP links to it are skipped as `not in selection`. A Boolean expression can't bring one back in: `not role=spine`, `not eos=x` and `not role` cover eligible EOS devices only, and `not eos` selects nothing (every eligible device has the `eos` tag).
 - **Messages.** Tagged devices that aren't eligible are listed once on stderr (`left out (not EOS: no system-generated eos tag): SN-SW1`). A tag that matches only non-EOS devices fails with `no eligible EOS device with tag …`; a `--hostname` of a non-EOS device fails with `… is not an eligible EOS device …`.
 - **Operator tags don't count.** An `eos` tag you create yourself confers nothing; you can still use it as an ordinary term in `--tag`.
 - **One extra lookup.** Eligibility is one tag query per run. If it fails, the run stops with an error; it never falls back to selecting everything.
@@ -150,7 +150,7 @@ CloudVision inventory can include third-party devices (for example Cisco switche
 
 ### Tag expressions
 
-`--tag` takes one `KEY=VALUE` or a small Boolean expression of them:
+`--tag` takes one `KEY=VALUE`, a bare `KEY`, or a small Boolean expression of them:
 
 ```sh
 ddn fetch --server www.arista.io --tag '(site=lab or site=dr) and not role=spine' --output-dir lab1 --lldp
@@ -163,14 +163,19 @@ site=lab and role=leaf
 site=lab and not role=spine
 not role=spine
 (site=lab or site=dr) and role=leaf
+role
+site=lab and not role
+site=lab and (role=leaf or not role)
 ```
 
 - **Operators.** `not`, `and` and `or`, in that order of precedence, with parentheses for grouping: `site=dr or site=lab and role=spine` means `site=dr or (site=lab and role=spine)`. Operators are words in any case (`and`, `AND`, `And`) separated by whitespace or parentheses.
 - **Terms** match a CloudVision device tag exactly, including case. `not role=spine` selects every eligible EOS device in inventory without that tag, including devices with no `role` tag at all (see [Only EOS devices are selected](#only-eos-devices-are-selected)).
-- **Plain tags are unchanged.** A `--tag` without a standalone `and`, `or` or `not` word in any case (separated by whitespace or parentheses) is one `KEY=VALUE`, as before. Its value may contain spaces or parentheses (`site=New York`). Operator words inside a term are just text (`team=and` is a plain tag).
-- **Limitation: standalone operator words are reserved.** A plain tag whose value contains `and`, `or` or `not` in any case as a separate word, such as `description=research and development`, is read as an expression and refused with a syntax error (exit 2). Such a tag can't be selected with `--tag` for now.
-- **Inside an expression,** a term can't contain whitespace or parentheses; such a tag can't be combined, and the expression is refused with a syntax error. There is no quoting.
-- **Validation.** A malformed expression (empty, a dangling operator, unbalanced parentheses, a term without `=`) is a usage error before anything is contacted or written.
+- **A bare `KEY`** matches devices that have that tag with any value: `role` selects every eligible EOS device with a `role` tag, and `not role` every eligible EOS device without one. The key is matched exactly, including case (`Role` is a different key); there are no wildcards. `eos` is an ordinary key here: `not eos` selects nothing.
+- **Plain tags are unchanged.** A `--tag` with `=` and without a standalone `and`, `or` or `not` word in any case (separated by whitespace or parentheses) is one `KEY=VALUE`, as before. Its value may contain spaces or parentheses (`site=New York`). Operator words inside a term are just text (`team=and` is a plain tag).
+- **Limitation: standalone operator words are reserved.** A plain tag whose value contains `and`, `or` or `not` in any case as a separate word is read as an expression, and the other words become bare keys: `description=research and development` means `description=research` and any device with a `development` tag, and `desc=a or b` means `desc=a` or any device with a `b` tag. Such a tag value can't be selected with `--tag` for now. If a value might contain these words, run `--list` first to check the selection.
+- **Reserved words.** A standalone `and`, `or` or `not` is always an operator, never a bare key: `--tag not` or `--tag AND` is a syntax error. `KEY=VALUE` terms that merely contain them (`and=or`) are unaffected.
+- **Inside an expression,** and for a bare `KEY`, a term can't contain whitespace or parentheses; such a tag can't be combined, and the expression is refused with a syntax error. There is no quoting.
+- **Validation.** A malformed expression (empty, a dangling operator, unbalanced parentheses, a term with an empty key or value) is a usage error before anything is contacted or written.
 - **Selection.** Each device is selected once, in device-ID order, and the count is printed (`selected 12 devices with tag …`). There is no size limit and no confirmation: a broad expression such as `not role=spine` is a valid choice. No match is the same error as for a plain tag. Without `--output-dir` (or `--list`), the expression must still match exactly one device.
 - **Check first.** Add `--list` to see which devices an expression selects before collecting; see [Preview a selection](#preview-a-selection---list).
 
@@ -309,7 +314,7 @@ A lab project is a directory with a `ddnetmirror.yml`:
 # ~/labs/fabric/ddnetmirror.yml
 server: www.arista.io     # CloudVision host[:port]
 name: fabric              # lab name and topology file name: fabric.clab.yml
-tag: site=lab             # device tag KEY=VALUE, or a tag expression ('role=leaf or role=spine')
+tag: site=lab             # device tag KEY=VALUE, a bare KEY, or a tag expression ('role=leaf or not role')
 # optional:
 # cacert: ca.pem          # CA bundle for on-prem CVP (relative to this directory)
 # fixup-rules: rules.yml  # relative to this directory, or "none"; default: the user default rules

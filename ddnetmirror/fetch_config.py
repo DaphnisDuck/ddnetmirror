@@ -86,7 +86,9 @@ def find_device_by_hostname(host, port, token, ca_file, hostname):
 
 
 def tagged_device_ids(host, port, token, ca_file, label, value):
-    """Return the set of device_ids assigned tag label=value (exact, case-sensitive)."""
+    """Return the set of device_ids assigned tag label=value (exact, case-sensitive),
+    or, with value None, assigned tag label with any value: an unset value is
+    "any" to partial_eq_filter, as in eos_device_ids."""
     key = tag.TagAssignmentKey(
         workspace_id="",  # merged (mainline) assignments
         element_type=tag.ElementType.DEVICE,
@@ -135,9 +137,10 @@ def find_tagged_device_ids(conn, selection, exclude=()):
     """Return the sorted distinct eligible EOS device_ids (see eos_device_ids)
     selected by a parsed --tag (at least one).
 
-    Each KEY=VALUE term is one tag assignment query; "not" is taken against the
-    eligible EOS inventory, so "not role=spine" includes EOS devices without a
-    role tag. Tagged devices that are not eligible are left out with a note.
+    Each KEY=VALUE or bare KEY term is one tag assignment query; "not" is taken
+    against the eligible EOS inventory, so "not role=spine" includes EOS devices
+    without a role tag and "not role" is exactly those. Tagged devices that are
+    not eligible are left out with a note.
     exclude: --exclude-host hostnames, dropped from the selection (see exclude_hosts)."""
     text, tree = selection
     eligible = eos_device_ids(*conn)
@@ -294,31 +297,43 @@ def checked_token(token, source):
 TAG_OPERATORS = ("and", "or", "not")
 
 
-def parse_term(text):
+def parse_term(text, bare=False):
+    """KEY=VALUE, or with bare=True also a bare KEY (any value: ("tag", KEY, None))."""
     label, sep, value = text.partition("=")
+    if bare and not sep:
+        return ("tag", label, None)
     if not (sep and label and value):
-        raise argparse.ArgumentTypeError(f"expected KEY=VALUE, got {text!r}")
+        expected = "KEY or KEY=VALUE" if bare else "KEY=VALUE"
+        raise argparse.ArgumentTypeError(f"expected {expected}, got {text!r}")
     return ("tag", label, value)
 
 
 def parse_tag(text):
     """Parse --tag into (text, tree); tree nodes are ("tag", KEY, VALUE),
-    ("not", x), ("and", x, y) and ("or", x, y).
+    ("tag", KEY, None) for a bare KEY (the tag with any value), ("not", x),
+    ("and", x, y) and ("or", x, y).
 
-    Without an and/or/not word in any case (separated by whitespace or parentheses), text is
-    one plain KEY=VALUE exactly as
-    before (the value may contain spaces or parentheses). Otherwise it is an
-    expression: not > and > or, with parentheses; terms are KEY=VALUE without
-    whitespace or parentheses, separated by whitespace or parentheses.
+    With "=" and without an and/or/not word in any case (separated by whitespace or
+    parentheses), text is one plain KEY=VALUE exactly as before (the value may
+    contain spaces or parentheses). Otherwise it is an expression: not > and > or,
+    with parentheses; terms are KEY=VALUE or a bare KEY without whitespace or
+    parentheses, separated by whitespace or parentheses. A standalone and/or/not
+    word is always an operator, never a bare KEY.
     """
     tokens = [token.lower() if token.lower() in TAG_OPERATORS else token  # AND, Or, nOt
               for token in re.findall(r"[()]|[^\s()]+", text)]  # parentheses separate words too
-    if not any(token in TAG_OPERATORS for token in tokens):
+    if "=" in text and not any(token in TAG_OPERATORS for token in tokens):
         return text, parse_term(text)
     pos = 0
 
     def error(reason):
         return argparse.ArgumentTypeError(f"bad tag expression {text!r}: {reason}")
+
+    if not tokens:
+        raise error("it is empty")
+    if len(tokens) == 1 and tokens[0] in TAG_OPERATORS:
+        raise error(f"{tokens[0]!r} is an operator, not a tag key "
+                    "(and, or, not are reserved words)")
 
     def peek():
         return tokens[pos] if pos < len(tokens) else None
@@ -342,9 +357,9 @@ def parse_tag(text):
             node = ("and", node, single())
         return node
 
-    def single():  # not x, (x), KEY=VALUE
+    def single():  # not x, (x), KEY=VALUE, KEY
         if peek() is None:
-            raise error("it ends where a KEY=VALUE, 'not' or '(' is expected")
+            raise error("it ends where a KEY, KEY=VALUE, 'not' or '(' is expected")
         token = take()
         if token == "not":
             return ("not", single())
@@ -357,7 +372,7 @@ def parse_tag(text):
         if token in ("and", "or", ")"):
             raise error(f"unexpected {token!r}")
         try:
-            return parse_term(token)
+            return parse_term(token, bare=True)
         except argparse.ArgumentTypeError as exc:
             raise error(exc) from None
 
@@ -769,9 +784,10 @@ def build_parser(prog=None):
         "--tag",
         type=parse_tag,
         metavar="EXPR",
-        help="device tag KEY=VALUE (exact, case-sensitive), or an expression of such terms "
-        "with not, and, or (in that precedence) and parentheses, e.g. "
-        "'(site=lab or site=dr) and not role=spine'; 'not' covers EOS devices without the tag. "
+        help="device tag KEY=VALUE (exact, case-sensitive), a bare KEY (the tag with any "
+        "value), or an expression of such terms with not, and, or (in that precedence) and "
+        "parentheses, e.g. '(site=lab or site=dr) and not role=spine' or 'site=lab and not "
+        "role'; 'not' covers EOS devices without the tag. and, or, not are reserved words. "
         "Must match exactly one device unless --output-dir or --list is given",
     )
     parser.add_argument(
