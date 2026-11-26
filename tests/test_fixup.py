@@ -356,6 +356,20 @@ def test_non_utf8_file_is_named_in_the_error(tmp_path, capsys, monkeypatch, bad,
     assert not (tmp_path / "out.cfg").exists()
 
 
+@pytest.mark.parametrize("argv", [
+    ["in.cfg", "--rules", "rules.yml", "--output", "out.cfg"],
+    ["--check", "rules.yml"],
+])
+def test_ctrl_c_exits_130_without_a_traceback(capsys, monkeypatch, argv):
+    def interrupted(path):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(fixup, "read_utf8", interrupted)
+
+    assert fixup.main(argv) == 130
+    assert capsys.readouterr().err == "interrupted\n"
+
+
 def test_check_rejects_input_and_output_arguments(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         fixup.main(["--check", "rules.yml", "in.cfg", "--output", str(tmp_path / "out.cfg")])

@@ -157,3 +157,14 @@ def test_tilde_in_project_paths_is_expanded(lab, monkeypatch, tmp_path):
 
     assert project["cacert"] == str(tmp_path / "home" / "ca.pem")
     assert project["fixup-rules"] == str(tmp_path / "home" / "rules.yml")
+
+
+def test_ctrl_c_while_loading_the_project_exits_130(lab, monkeypatch, capsys):
+    def interrupted(directory):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(build, "load_project", interrupted)
+
+    assert build.main([]) == 130
+    assert capsys.readouterr().err == "interrupted\n"
+    assert lab["fetch"] == []

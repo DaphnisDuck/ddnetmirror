@@ -268,6 +268,9 @@ def main(argv=None, prog=None):
         except (FetchError, OSError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+        except KeyboardInterrupt:
+            print("interrupted", file=sys.stderr)
+            return 130
         print(f"{args.check}: {len(rules)} rule(s) OK")
         return 0
     missing = [name for name, value in

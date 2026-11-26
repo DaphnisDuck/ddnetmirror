@@ -129,6 +129,9 @@ def main(argv=None, prog=None):
     except ProjectError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
     try:
         return fetch_config.main(fetch_args(project, directory, args.token_file, args.force),
                                  prog=prog, base_dir=directory)
