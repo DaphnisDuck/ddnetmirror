@@ -1,0 +1,158 @@
+# ddnetmirror fixup cookbook (examples/fixups.yml)
+#
+# Opt-in examples only. ddnetmirror never installs, copies or applies this
+# file on its own, and nothing in it is a recommended default. All example
+# rules are commented out. Every config, hostname and address below is
+# synthetic.
+#
+# How to use it
+#
+# 1. Copy this file somewhere of your own: for example into a lab project
+# directory as rules.yml, or to ~/.config/ddnetmirror/fixups.yml to make it
+# your user default rules (see "User default fixup rules" in the README).
+#
+# 2. Enable a recipe by uncommenting its lines. Recipe lines start with "#"
+# directly followed by the YAML, like "#- op: replace" or "#  match: ...".
+# Delete just that one "#" character. Prose lines ("# like this") stay
+# comments.
+#
+# 3. Edit the enabled rules to suit your lab. Rules run top to bottom, each on
+# the previous rule's output, so order matters.
+#
+# 4. Check the file, preview it on one config, then use it with
+# "ddn fetch ... --lab-name lab1 --fixup-rules rules.yml" or with
+# "fixup-rules: rules.yml" in a ddn build project's ddnetmirror.yml:
+# $ ddn fixup --check rules.yml
+# $ ddn fixup configs/original/leaf1.cfg --rules rules.yml --output leaf1-lab.cfg
+#
+# Matching
+#
+# "match" is a literal substring of a line, unless the rule says
+# "regex: true"; then it is a Python regular expression searched in each line
+# (re.search). Lines are matched one at a time, without the line ending.
+#
+# Anchor a regex with ^ and $ when you mean a whole line: '^hostname .+$'
+# matches "hostname leaf1" but not "   description hostname".
+#
+# In a regex replace, groups in parentheses are captured, and \1, \2, ... in
+# "with" put them back (Python re.sub). Use single quotes in YAML so
+# backslashes stay as written.
+#
+# Fixups are plain text editing. ddnetmirror does not understand EOS and does
+# not check whether the result is a valid config for your cEOS image.
+#
+# The one active rule below is a deliberate no-op: it replaces "!" with "!",
+# so it never changes anything. It is here only because ddnetmirror refuses
+# an empty rule file, and it makes this file valid as shipped. Keep it, or
+# delete it once you have enabled a recipe.
+- op: replace
+  match: "!"
+  with: "!"
+
+
+# ---------------------------------------------------------------------------
+# Recipe: Containerlab hostname alignment                   (op: replace, regex)
+# ---------------------------------------------------------------------------
+# Containerlab treats a node's startup-config file as a Go template when it
+# deploys the lab, and fills in {{ .LongName }} with the node's container
+# name: by default clab-<lab>-<node>, e.g. clab-lab1-leaf1. ddnetmirror does no templating: this rule only writes the
+# placeholder text, and Containerlab replaces it at deploy time. So the
+# device's hostname follows the lab and its prefix, with no lab name
+# hard-coded here.
+#
+# Verified with containerlab 0.83.0 and cEOS 4.35.7.2M: deploying a startup
+# config containing "hostname {{ .LongName }}" gave "show hostname" =
+# clab-<lab>-<node> with the default prefix, and <prefix>-<lab>-<node> with a
+# custom "prefix:" in the topology. Other Containerlab versions may differ;
+# check yours. ({{ .ShortName }}, the node name alone, was not tested.)
+#
+# The rendered config only exists in the deployed lab: files written by
+# ddnetmirror keep the literal "{{ .LongName }}".
+#
+#- op: replace
+#  match: '^hostname .+$'
+#  with: 'hostname {{ .LongName }}'
+#  regex: true
+
+
+# ---------------------------------------------------------------------------
+# Recipe: lab-only local admin user     (op: delete-line, insert-if-missing)
+# ---------------------------------------------------------------------------
+# WARNING: admin/admin is an insecure, well-known credential. Use this only in
+# an isolated lab that nothing else can reach, or change the secret to your
+# own. It is plain text in the generated startup configs.
+#
+# The first rule deletes every local "username ..." line from the copy (the
+# production accounts, their secrets and SSH keys). The second inserts one
+# basic account just before the final "end" line, unless a "username admin"
+# line is still there. "before" must match exactly one line, or the rule
+# fails for that device and no startup config is written for it.
+#
+# This replaces local users only. ddnetmirror does not change AAA: existing
+# "aaa authentication", "aaa authorization", TACACS+/RADIUS server or
+# "management ssh" settings in the copied config still apply and can prevent
+# this account from logging in. Adjust those with your own rules if needed.
+#
+# Verified on cEOS 4.35.7.2M: the line below is accepted as written ("secret"
+# takes a clear-text password and EOS stores it hashed), and SSH login as
+# admin/admin worked with no other AAA configuration present.
+#
+#- op: delete-line
+#  match: '^username '
+#  regex: true
+#- op: insert-if-missing
+#  match: '^username admin '
+#  regex: true
+#  before: '^end$'
+#  text: |
+#    username admin privilege 15 role network-admin secret admin
+
+
+# ---------------------------------------------------------------------------
+# Syntax examples
+# ---------------------------------------------------------------------------
+# These teach each operation's syntax with made-up config lines. They are not
+# recommendations for any platform or EOS version; replace the match text with
+# what your own lab needs.
+
+# replace, literal: every occurrence of the substring, in every line.
+#- op: replace
+#  match: "192.0.2.10"
+#  with: "198.51.100.10"
+
+# replace, regex with capture groups: keep the indentation and the existing
+# text (\1, \2) and add a marker, so "   description uplink" becomes
+# "   description [lab] uplink".
+#- op: replace
+#  match: '^(\s+description )(.*)$'
+#  with: '\1[lab] \2'
+#  regex: true
+
+# delete-line: removes only the matching lines; indented lines under them stay.
+#- op: delete-line
+#  match: "logging host 192.0.2.50"
+
+# delete-block: removes the matching line and every following more-indented
+# line, up to the next line with equal or lesser indentation (such as an
+# unindented "!", which is kept).
+#- op: delete-block
+#  match: '^daemon ExampleAgent$'
+#  regex: true
+
+# insert-if-missing: adds the text verbatim only if no line matches "match".
+# With "before" it goes just above the one line that matches "before" (here
+# the final "end"); without "before" it is appended at the end of the file,
+# after "end".
+#- op: insert-if-missing
+#  match: '^banner motd$'
+#  regex: true
+#  before: '^end$'
+#  text: |
+#    banner motd
+#    Synthetic lab copy. Not production.
+#    EOF
+#    !
+
+# collapse-separators: merges runs of adjacent unindented "!" lines, such as
+# those left behind by deleted blocks, into one. No other fields.
+#- op: collapse-separators
