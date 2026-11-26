@@ -105,9 +105,11 @@ def find_links(hostnames, lldp):
 def report_links(grpc_addr, token, ca_file, devices):
     """Query LLDP for devices [(hostname, serial)] and print the link report.
 
-    Returns (links, available): available is False when no device returned any
-    LLDP data (every query failed or came back empty), so an empty link list
-    cannot be mistaken for "no neighbors".
+    Returns (links, available, unavailable): available is False when no device
+    returned any LLDP data, so an empty link list cannot be mistaken for "no
+    neighbors"; unavailable lists, sorted, the queried hostnames without LLDP
+    data (the query failed, or it returned no LLDP state at all). A device that
+    reports LLDP ports but no neighbors has data.
     """
     hostnames = [h for h, _ in devices]
     lldp = {}
@@ -127,4 +129,5 @@ def report_links(grpc_addr, token, ca_file, devices):
         print(f"{shown(ah)} {shown(ai)} <-> {shown(bh)} {shown(bi)} [{kind}]")
     for reason in skipped:
         print(f"skipped LLDP: {reason}", file=sys.stderr)
-    return links, any(data is not None for data in lldp.values())
+    unavailable = sorted(host for host, data in lldp.items() if data is None)
+    return links, len(unavailable) < len(lldp), unavailable
