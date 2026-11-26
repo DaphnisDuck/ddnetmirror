@@ -139,7 +139,8 @@ def find_tagged_device_ids(conn, selection, exclude=()):
 
     Each KEY=VALUE or bare KEY term is one tag assignment query; "not" is taken
     against the eligible EOS inventory, so "not role=spine" includes EOS devices
-    without a role tag and "not role" is exactly those. Tagged devices that are not eligible are left out with a note.
+    without a role tag and "not role" is exactly those. Tagged devices that are
+    not eligible are left out with a note.
     exclude: --exclude-host hostnames, dropped from the selection (see exclude_hosts)."""
     text, tree = selection
     eligible = eos_device_ids(*conn)
