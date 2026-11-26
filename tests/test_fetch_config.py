@@ -2,6 +2,7 @@ import argparse
 import contextlib
 import os
 import re
+import shlex
 import stat
 import subprocess
 
@@ -558,6 +559,7 @@ def test_batch_collects_every_tagged_device(batch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "leaf1 (SN1, EOS 4.32.1F)" in out
     assert "spine1 (SN3, EOS unknown)" in out
+    assert "containerlab" not in out  # config-only: no deployment hint
     assert "collected 3 of 3" in out
 
 
@@ -807,7 +809,27 @@ topology:
         "configs", "configs/collected", "configs/collected/leaf1.cfg", "configs/collected/leaf2.cfg",
         "configs/collected/spine1.cfg", "lab1.clab.yml",
     ]
-    assert "(3 nodes, 2 links)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "(3 nodes, 2 links)" in out
+    path = tmp_path / "lab" / "lab1.clab.yml"
+    assert out.endswith(f"\n  containerlab deploy -t {path}\n")  # complete: deployment hint
+
+
+def test_deploy_hint_is_absolute_and_shell_quoted_from_another_directory(
+        batch, tmp_path, monkeypatch, capsys):
+    batch["lldp"] = {serial: [port("Ethernet1")] for serial in batch["serials"]}
+    (tmp_path / "work").mkdir()
+    monkeypatch.chdir(tmp_path / "work")
+    output_dir = "../my lab; $(rm -rf x) 'q'"
+
+    assert run(selector=("--tag", "site=lab", "--output-dir", output_dir, "--lldp",
+                         "--lab-name", "lab1", "--image", "ceos:4.35.7.2M")) == 0
+
+    command = capsys.readouterr().out.splitlines()[-1].strip()
+    words = shlex.split(command)
+    assert words[:3] == ["containerlab", "deploy", "-t"] and "sudo" not in command
+    assert words[3:] == [str(tmp_path / "my lab; $(rm -rf x) 'q'" / "lab1.clab.yml")]
+    assert os.path.isfile(words[3])
 
 
 def test_topology_omits_failed_devices_and_untranslatable_links(batch, tmp_path, capsys):
@@ -827,10 +849,11 @@ def test_topology_omits_failed_devices_and_untranslatable_links(batch, tmp_path,
         '  links:\n    # one-sided: LLDP reported this link from one end only\n'
         '    - endpoints: ["leaf1:eth1", "spine1:eth49_1"]\n'
     )
-    err = capsys.readouterr().err
+    out, err = capsys.readouterr()
     assert "leaf2 Ethernet12 <-> spine1 Ethernet50/1: no saved config for leaf2" in err
     assert "cannot translate Management1" in err
     assert "is INCOMPLETE" in err
+    assert "containerlab deploy" not in out  # incomplete: no deployment hint
 
 
 def test_topology_rejects_invalid_node_name(batch, tmp_path, capsys):
@@ -863,7 +886,9 @@ def test_topology_not_written_when_every_lldp_query_fails(batch, tmp_path, capsy
     assert sorted(p.name for p in (tmp_path / "lab" / "configs" / "collected").iterdir()) == [
         "leaf1.cfg", "leaf2.cfg", "spine1.cfg",
     ]
-    assert "LLDP data unavailable for every device" in capsys.readouterr().err
+    out, err = capsys.readouterr()
+    assert "LLDP data unavailable for every device" in err
+    assert "containerlab deploy" not in out  # failed: no deployment hint
 
 
 def test_topology_with_lldp_but_no_neighbors_has_no_links(batch, tmp_path):
@@ -1209,6 +1234,41 @@ def test_force_regenerates_lab_and_leaves_other_files(batch, tmp_path, capsys, e
     assert "# 1 of 2 devices with a fixed-up startup config; 0 links." in topo
     assert "INCOMPLETE" in topo
     assert "failed: leaf2 (SN2)" in capsys.readouterr().err
+
+
+def test_ddn_build_refuses_existing_files_unless_forced(batch, tmp_path, monkeypatch, capsys):
+    batch["lldp"] = {serial: [port("Ethernet1")] for serial in batch["serials"]}
+    project = tmp_path / "my lab"
+    project.mkdir()
+    (project / "ddnetmirror.yml").write_text(
+        "server: cv.example:443\nname: lab1\ntag: site=lab\nimage: ceos:4.35.7.2M\n")
+    (project / "notes.txt").write_text("mine")
+    monkeypatch.chdir(project)
+    topology_file = project / "lab1.clab.yml"
+
+    assert cli.main(["build"]) == 0
+    assert capsys.readouterr().out.endswith(f"containerlab deploy -t '{topology_file}'\n")
+    built = files(project)
+    assert set(built) == {"ddnetmirror.yml", "notes.txt", "lab1.clab.yml", "configs/collected/leaf1.cfg",
+                          "configs/collected/leaf2.cfg", "configs/collected/spine1.cfg"}
+
+    calls = len(batch["config_ids"])
+    assert cli.main(["build"]) == 1  # refused before any collection, nothing changed
+    assert "lab1.clab.yml already exists; not overwriting" in capsys.readouterr().err
+    assert len(batch["config_ids"]) == calls and files(project) == built
+
+    batch["results"]["SN1"] = {"config": "! SN1 new\nend\n", "errors": []}
+    assert cli.main(["build", "--force"]) == 0
+    assert "containerlab deploy -t" in capsys.readouterr().out
+    now = files(project)
+    assert now["configs/collected/leaf1.cfg"] == b"! SN1 new\nend\n"
+    assert now["notes.txt"] == b"mine" and set(now) == set(built)
+
+    topology_file.unlink()
+    topology_file.symlink_to(project / "notes.txt")
+    assert cli.main(["build", "--force"]) == 1  # same file protections as ddn fetch --force
+    assert "is a symbolic link; not replacing it" in capsys.readouterr().err
+    assert (project / "notes.txt").read_text() == "mine"
 
 
 @pytest.mark.parametrize("failure", ["write", "rename"])

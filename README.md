@@ -25,7 +25,7 @@ Saved running configs are real device configs. They can contain hashed credentia
 
 - **Linux with Python ≥ 3.10.**
 - **A CloudVision service-account token**, from an optional [token file](#token-file) or the `CLOUDVISION_TOKEN` environment variable. The token value is never accepted as an argument (only a token file's path is) and never logged.
-- **To run the lab:** [Containerlab](https://containerlab.dev) and a cEOS image that you obtain and import yourself (for example `ceos:4.35.7.2M`). ddnetmirror does not download images. `ddn up` runs Containerlab through `sudo` (see [`ddn up`](#one-command-ddn-up)).
+- **To run the lab:** [Containerlab](https://containerlab.dev) and a cEOS image that you obtain and import yourself (for example `ceos:4.35.7.2M`). ddnetmirror does not download images, and never runs Containerlab: you deploy the generated lab yourself, with the privileges your Containerlab installation needs.
 
 ### Token file
 
@@ -54,7 +54,7 @@ f=~/.config/ddnetmirror/token; touch "$f" && chmod 600 "$f" && cat > "$f"   # pa
 
 ### One token file per environment
 
-With tokens for several CloudVision environments, keep one file per environment and pick it with `--token-file PATH` on `ddn fetch` or `ddn up`:
+With tokens for several CloudVision environments, keep one file per environment and pick it with `--token-file PATH` on `ddn fetch` or `ddn build`:
 
 ```sh
 install -d -m 700 ~/.config/ddnetmirror/tokens
@@ -67,13 +67,13 @@ ddn fetch --server cvp-staging.example.net --ca-file ca.pem --hostname leaf1 \
     --token-file ~/.config/ddnetmirror/tokens/staging
 ddn fetch --server www.arista.io --tag site=lab --output-dir lab1 --lldp \
     --token-file ~/.config/ddnetmirror/tokens/cvaas
-cd ~/labs/fabric && ddn up --token-file ~/.config/ddnetmirror/tokens/production
+cd ~/labs/fabric && ddn build --token-file ~/.config/ddnetmirror/tokens/production
 ```
 
 - **The option wins**, even when `CLOUDVISION_TOKEN` is set.
 - **No fallback.** If the named file is missing or refused, the command stops with an error; it never falls back to the variable or the default file.
 - **Same checks** as the default file (the list above); symlinks are refused here too, so name the real file. `~` is expanded, and a relative path is relative to the current directory.
-- **Not in `ddnetmirror.yml`.** `ddn up` takes `--token-file` on its command line only.
+- **Not in `ddnetmirror.yml`.** `ddn build` takes `--token-file` on its command line only.
 
 ## Install
 
@@ -83,14 +83,13 @@ python3 -m venv .venv && .venv/bin/pip install .     # or -e ".[test]" for devel
 .venv/bin/ddn --help
 ```
 
-This installs one command, `ddn`, with four subcommands:
+This installs one command, `ddn`, with three subcommands:
 
 | Command | Purpose |
 |---|---|
 | `ddn fetch` | Query CloudVision: running configs, EOS versions, LLDP, and optionally a Containerlab topology. |
 | `ddn fixup` | Apply fixup rules to a copy of one config file. |
-| `ddn up` | Build and deploy the lab described by `ddnetmirror.yml` in the current directory ([below](#one-command-ddn-up)). |
-| `ddn down` | Destroy that lab with `containerlab destroy` ([below](#one-command-ddn-up)). |
+| `ddn build` | Generate the lab described by `ddnetmirror.yml` in the current directory ([below](#one-command-ddn-build)). |
 
 `ddn COMMAND --help` lists each command's options. Man pages and tldr-style examples are in [`man/`](man/). The older names `ddnetmirror-fetch-config` and `ddnetmirror-fixup` still work as aliases.
 
@@ -142,7 +141,7 @@ wrote Containerlab topology lab1/lab1.clab.yml (4 nodes, 5 links)
 
 CloudVision inventory can include third-party devices (for example Cisco switches) that have no EOS running config. ddnetmirror only ever selects **eligible EOS devices**: devices that carry CloudVision's **system-generated `eos` tag**, with any value (the value isn't read).
 
-- **Everywhere.** `--hostname`, `--tag` (including the universe of `not`), `--list`, `--exclude-host`, collection, LLDP, the topology and `ddn up` all use only eligible devices. A non-EOS device's config is never fetched, it never becomes a node, and LLDP links to it are skipped as `not in selection`. A Boolean expression can't bring one back in: `not role=spine`, `not eos=x` and `not role` cover eligible EOS devices only, and `not eos` selects nothing (every eligible device has the `eos` tag).
+- **Everywhere.** `--hostname`, `--tag` (including the universe of `not`), `--list`, `--exclude-host`, collection, LLDP, the topology and `ddn build` all use only eligible devices. A non-EOS device's config is never fetched, it never becomes a node, and LLDP links to it are skipped as `not in selection`. A Boolean expression can't bring one back in: `not role=spine`, `not eos=x` and `not role` cover eligible EOS devices only, and `not eos` selects nothing (every eligible device has the `eos` tag).
 - **Messages.** Tagged devices that aren't eligible are listed once on stderr (`left out (not EOS: no system-generated eos tag): SN-SW1`). A tag that matches only non-EOS devices fails with `no eligible EOS device with tag …`; a `--hostname` of a non-EOS device fails with `… is not an eligible EOS device …`.
 - **Operator tags don't count.** An `eos` tag you create yourself confers nothing; you can still use it as an ordinary term in `--tag`.
 - **One extra lookup.** Eligibility is one tag query per run. If it fails, the run stops with an error; it never falls back to selecting everything.
@@ -210,7 +209,14 @@ How the topology is built:
 - **Interface names** are converted mechanically: `Ethernet1` → `eth1`, `Ethernet49/1` → `eth49_1`.
 - **The timestamp** is the time the file was written, not when CloudVision observed the devices.
 
-Deploy and destroy the lab yourself:
+When the topology is complete (every selected device made it in), the last lines of output are a ready-to-copy deploy command with the topology's absolute path, shell-quoted:
+
+```text
+deploy it with Containerlab, with the privileges your install needs:
+  containerlab deploy -t /home/me/lab1/lab1.clab.yml
+```
+
+ddnetmirror only prints it. It never runs it and never adds `sudo`: run it with the privileges your Containerlab installation needs (for example with `sudo`, unless your user may run Containerlab directly). No command is printed when the topology is incomplete or not written, with `--list`, or when no topology was requested. Deploy and destroy the lab yourself:
 
 ```sh
 sudo containerlab deploy  -t lab1/lab1.clab.yml
@@ -218,7 +224,7 @@ sudo docker exec -it clab-lab1-leaf1 Cli          # log in to a node
 sudo containerlab destroy -t lab1/lab1.clab.yml --cleanup
 ```
 
-`ddn fetch` generates lab files. It does not deploy, start, stop or otherwise manage running labs. That is Containerlab's job, run by you with the commands above, or by [`ddn up`](#one-command-ddn-up) when you ask it to deploy.
+ddnetmirror generates lab files. It does not deploy, start, stop or otherwise manage running labs. That is Containerlab's job.
 
 Smaller steps of the same command, each leaving out more options:
 - **Topology without fixups:** omit `--fixup-rules` (and have no [user default rules](#user-default-fixup-rules)), or pass `--fixup-rules none`. No `configs/startup/` is written, and the topology boots the collected configs directly: `startup-config: "configs/collected/__clabNodeName__.cfg"`.
@@ -306,7 +312,7 @@ By default nothing is ever overwritten, so the usual way to refresh a lab is a n
 - A symbolic link, directory or other non-regular file at one of these paths is never followed or replaced. It is reported, and you remove it or use a new directory.
 - `--force` only writes files. It never touches a running lab: destroy and redeploy it yourself with Containerlab.
 
-## One command: `ddn up`
+## One command: `ddn build`
 
 A lab project is a directory with a `ddnetmirror.yml`:
 
@@ -325,21 +331,19 @@ tag: site=lab             # device tag KEY=VALUE, a bare KEY, or a tag expressio
 ```
 
 ```sh
-cd ~/labs/fabric && ddn up
+cd ~/labs/fabric && ddn build
 ```
 
-`ddn up` does this:
-1. **Validates the project file.** Unknown keys are refused, and so is a token or token file: the token comes from `--token-file PATH` on the `ddn up` command line, `CLOUDVISION_TOKEN` or the default [token file](#token-file), as for `ddn fetch`. Reading the file runs nothing.
-2. **Refuses an existing lab.** If Docker has any container (running or stopped) of a Containerlab lab with this name, `ddn up` refuses and changes nothing. It tells you to remove the lab with `ddn down`. It never destroys or redeploys a lab itself.
-3. **Regenerates the project's files** in this directory, exactly like `ddn fetch --tag TAG --output-dir . --lldp --lab-name NAME --force` (plus one `--exclude-host` per `exclude-hosts` entry): `configs/collected/`, `configs/startup/` (with fixup rules) and `NAME.clab.yml`. Other files are untouched.
-4. **Deploys only a complete lab.** If any device failed or no topology was written, it stops with `not deploying` and the files are left for you to inspect.
-5. **Runs `containerlab deploy -t ./NAME.clab.yml`.** Containerlab needs root unless it is installed setuid for the `clab_admins` group, so `ddn up` runs it through `sudo` unless you are root or containerlab is setuid-root; sudo may ask for your password. The command is printed first, and Containerlab's output, including its table of nodes and addresses, is shown unchanged. `ddn up` exits with Containerlab's exit status.
+`ddn build` does this:
+1. **Validates the project file.** Unknown keys are refused, and so is a token or token file: the token comes from `--token-file PATH` on the `ddn build` command line, `CLOUDVISION_TOKEN` or the default [token file](#token-file), as for `ddn fetch`. Reading the file runs nothing.
+2. **Generates the project's files** in this directory, exactly like `ddn fetch --tag TAG --output-dir . --lldp --lab-name NAME` (plus one `--exclude-host` per `exclude-hosts` entry): `configs/collected/`, `configs/startup/` (with fixup rules) and `NAME.clab.yml`. Other files are untouched.
+3. **Prints the deploy command** when the topology is complete, as `ddn fetch` does ([above](#from-cloudvision-to-containerlab)). It deploys nothing; its exit status is that of the generation.
 
-   If the deploy fails or is interrupted, nothing is torn down; the message shows the `containerlab inspect` command and suggests `ddn down`.
+Existing generated files are refused, as with `ddn fetch`. `ddn build --force` regenerates them in place with exactly the rules of [`ddn fetch --force`](#regenerate-a-lab-in-place---force): only the generated files are replaced, without backups (including files you edited by hand at those paths); unrelated files are kept; symlinks and non-regular files are refused. It never looks at or touches a running lab or Containerlab's own `clab-NAME/` directory. Rebuild only when that is safe for your lab, for example after destroying it, and redeploy it yourself.
 
-Running `ddn up` concurrently against the same project directory is unsupported: there is no lock, and overlapping runs can mix generated files. Run one at a time.
+Running `ddn build` concurrently against the same project directory is unsupported: there is no lock, and overlapping runs can mix generated files. Run one at a time.
 
-`ddn down` removes the lab: in the same directory it runs `containerlab destroy -t ./NAME.clab.yml --cleanup`, with the same `sudo` handling, and exits with Containerlab's status. It refuses, running nothing, if `ddnetmirror.yml` is missing or invalid, or `NAME.clab.yml` is missing, a symlink or not a regular file, or names a different lab. It needs no CloudVision access or token. `--cleanup` also deletes Containerlab's own `clab-NAME/` directory and any lab-local files stored there, such as configs saved with `write memory` inside the running lab; copy out anything you want to keep first. `ddnetmirror.yml`, the topology and the collected and startup configs are kept, so `ddn up` can deploy the lab again.
+**Migrating from `ddn up` / `ddn down`** (removed, no aliases): `ddn up` is now `ddn build` (add `--force` to regenerate an existing project, which `ddn up` always did) followed by the printed `containerlab deploy -t …` command. `ddn down` is now `containerlab destroy -t NAME.clab.yml --cleanup`, run yourself in the project directory with the privileges your Containerlab installation needs. `--cleanup` also deletes Containerlab's `clab-NAME/` directory, including configs saved with `write memory` inside the lab.
 
 ## Fetch a single device
 

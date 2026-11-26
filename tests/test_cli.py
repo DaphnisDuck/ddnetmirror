@@ -1,9 +1,9 @@
 import pytest
 
-from ddnetmirror import cli, fetch_config, fixup, up
+from ddnetmirror import build, cli, fetch_config, fixup
 
 
-@pytest.mark.parametrize("command, module", [("fetch", fetch_config), ("fixup", fixup), ("up", up)])
+@pytest.mark.parametrize("command, module", [("fetch", fetch_config), ("fixup", fixup), ("build", build)])
 def test_ddn_dispatches_arguments_unchanged(monkeypatch, command, module):
     assert cli.COMMANDS[command][0] is module.main  # the alias entry point itself
     calls = []
@@ -28,7 +28,7 @@ def test_ddn_fixup_runs_the_same_logic_as_the_alias(tmp_path):
 
 
 @pytest.mark.parametrize("command, usage", [("fetch", "usage: ddn fetch"), ("fixup", "usage: ddn fixup"),
-                                            ("up", "usage: ddn up"), ("down", "usage: ddn down")])
+                                            ("build", "usage: ddn build")])
 def test_subcommand_help_names_ddn(capsys, command, usage):
     with pytest.raises(SystemExit) as exc:
         cli.main([command, "--help"])
@@ -37,7 +37,10 @@ def test_subcommand_help_names_ddn(capsys, command, usage):
     assert capsys.readouterr().out.startswith(usage)
 
 
-@pytest.mark.parametrize("argv, message", [([], "required: COMMAND"), (["nope"], "invalid choice: 'nope'")])
+@pytest.mark.parametrize("argv, message", [
+    ([], "required: COMMAND"), (["nope"], "invalid choice: 'nope'"),
+    (["up"], "invalid choice: 'up'"), (["down"], "invalid choice: 'down'"),  # removed in #89
+])
 def test_missing_or_unknown_command_is_a_usage_error(capsys, argv, message):
     with pytest.raises(SystemExit) as exc:
         cli.main(argv)

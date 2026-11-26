@@ -1,0 +1,26 @@
+.TH DDN-BUILD "1" "2026\-11\-25" "ddnetmirror 0.0.1" "ddnetmirror manual"
+.SH NAME
+ddn build \- generate the lab described by ddnetmirror.yml
+.SH SYNOPSIS
+.B ddn
+build [-h] [--token-file PATH] [--force]
+.SH DESCRIPTION
+Generate the lab described by ./ddnetmirror.yml: collect configs and LLDP from CloudVision, apply fixup rules and write configs/ and NAME.clab.yml here, as ddn fetch \-\-tag TAG \-\-output\-dir . \-\-lldp \-\-lab\-name NAME. Existing generated files are refused unless \-\-force. Deploys nothing: when generation is complete, it prints the 'containerlab deploy' command to run yourself. ddnetmirror.yml keys: server, name, tag (KEY=VALUE, a bare KEY or an expression, as for ddn fetch \-\-tag); optional cacert, fixup\-rules (a path or none), image, exclude\-hosts (a list of hostnames, as for ddn fetch \-\-exclude\-host). The token is read as for ddn fetch: \-\-token\-file, else CLOUDVISION_TOKEN, else the default token file.
+
+.SH OPTIONS
+.TP
+\fB\-\-token\-file\fR \fI\,PATH\/\fR
+read the CloudVision token from this file instead of CLOUDVISION_TOKEN or the
+default token file (e.g. one file per environment). Same checks as the default
+file: owner\-only regular file, not a symlink; an unusable file is an error
+
+.TP
+\fB\-\-force\fR
+replace existing generated files (collected and startup configs, topology) as
+ddn fetch \-\-force does; no backups, other files untouched. Rebuild only when
+that is safe for your lab
+
+.SH DISTRIBUTION
+The latest version of ddnetmirror may be downloaded from
+.UR https://github.com/DaphnisDuck/ddnetmirror
+.UE

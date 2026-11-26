@@ -5,6 +5,7 @@ import asyncio
 import importlib.metadata
 import os
 import re
+import shlex
 import stat
 import sys
 from datetime import datetime, timezone
@@ -404,7 +405,7 @@ def run(args, base_dir=None):
     """Return True if every selected device was collected.
 
     base_dir: directory that a relative --fixup-rules path is relative to
-    (ddn up passes the project directory); None means the working directory."""
+    (ddn build passes the project directory); None means the working directory."""
     rules = None
     if args.lab_name:  # fixups exist only for a generated lab
         path, source = resolve_fixup_rules(args.fixup_rules, base_dir)
@@ -757,7 +758,7 @@ def choose_images(selector, saved):
 
 
 def add_token_file_argument(parser):
-    """--token-file, shared by ddn fetch and ddn up."""
+    """--token-file, shared by ddn fetch and ddn build."""
     parser.add_argument(
         "--token-file",
         metavar="PATH",
@@ -904,7 +905,13 @@ def main(argv=None, prog=None, base_dir=None):
     except (FetchError, OSError) as exc:
         print(f"error: {shown(exc)}", file=sys.stderr)
         return 1
-    return 0 if complete else 1
+    if not complete:
+        return 1
+    if args.lab_name:  # complete: every selected device is in the topology
+        path = os.path.abspath(topology_path(args.output_dir, args.lab_name))
+        print("deploy it with Containerlab, with the privileges your install needs:\n"
+              f"  containerlab deploy -t {shlex.quote(path)}")
+    return 0
 
 
 if __name__ == "__main__":
