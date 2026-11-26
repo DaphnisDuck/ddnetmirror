@@ -48,18 +48,18 @@
 
 `ddn fixup --check {{rules.yml}}`
 
-- Build and deploy the lab described by `ddnetmirror.yml` in the current directory (refuses if the lab exists):
+- Generate the lab described by `ddnetmirror.yml` in the current directory (prints the `containerlab deploy` command to run):
 
-`ddn up`
+`ddn build`
 
-- Build and deploy it with the token of one environment:
+- Generate it with the token of one environment:
 
-`ddn up --token-file {{~/.config/ddnetmirror/tokens/staging}}`
+`ddn build --token-file {{~/.config/ddnetmirror/tokens/staging}}`
 
-- Destroy that lab, keeping the project's files:
+- Regenerate it in place, replacing its generated files (no backups; only when safe for the running lab):
 
-`ddn down`
+`ddn build --force`
 
 - Show the options of a subcommand:
 
-`ddn {{fetch|fixup|up|down}} --help`
+`ddn {{fetch|fixup|build}} --help`
