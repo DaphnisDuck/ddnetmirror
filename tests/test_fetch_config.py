@@ -121,7 +121,8 @@ def cv(monkeypatch, tmp_path):
             pass
 
         def get(self, queries):
-            data = state["lldp"].get(queries[0].dataset.name, [])
+            # A device not listed has LLDP state without neighbors; [] means no LLDP state.
+            data = state["lldp"].get(queries[0].dataset.name, [port("Management1")])
             if isinstance(data, Exception):
                 raise data
             yield {"notifications": data}
@@ -704,12 +705,13 @@ def test_lldp_never_turns_unclear_observations_into_links(batch, capsys, case, r
     if case == "ambiguous":
         batch["hostnames"]["SN2"] = "spine1"
     if case == "unavailable":
-        del batch["lldp"]["SN3"]
+        batch["lldp"]["SN3"] = []
     if case == "query_error":
         batch["lldp"]["SN3"] = RuntimeError("unavailable")
 
-    # LLDP problems never change the exit status; "ambiguous" fails its config writes.
-    assert run_lldp() == (1 if case == "ambiguous" else 0)
+    # Unclear neighbors are not errors; missing LLDP data and the config write
+    # failures of "ambiguous" are.
+    assert run_lldp() == (1 if case in ("ambiguous", "unavailable", "query_error") else 0)
 
     out = capsys.readouterr()
     assert "LLDP links between selected devices: 0" in out.out
@@ -889,6 +891,24 @@ def test_topology_not_written_when_every_lldp_query_fails(batch, tmp_path, capsy
     out, err = capsys.readouterr()
     assert "LLDP data unavailable for every device" in err
     assert "containerlab deploy" not in out  # failed: no deployment hint
+
+
+def test_topology_written_but_incomplete_when_some_lldp_data_is_missing(batch, tmp_path, capsys):
+    batch["lldp"] = {
+        "SN1": [nbr("Ethernet1", "spine1", "Ethernet49/1")],
+        "SN2": RuntimeError("unavailable"),  # leaf2: query failed
+        "SN3": [port("Ethernet49/1")],
+    }
+
+    assert run_topology() == 1
+
+    text = (tmp_path / "lab" / "lab1.clab.yml").read_text()
+    assert "# INCOMPLETE: LLDP data unavailable for leaf2; their links are missing.\n" in text
+    assert yaml.safe_load(text)["topology"]["links"] == [
+        {"endpoints": ["leaf1:eth1", "spine1:eth49_1"]}]  # links with LLDP data on both ends kept
+    out, err = capsys.readouterr()
+    assert "LLDP data unavailable for 1 of 3 devices, so their links are missing: leaf2" in err
+    assert "containerlab deploy" not in out
 
 
 def test_topology_with_lldp_but_no_neighbors_has_no_links(batch, tmp_path):
@@ -1284,6 +1304,11 @@ def test_ddn_build_refuses_existing_files_unless_forced(batch, tmp_path, monkeyp
     now = files(project)
     assert now["configs/original/leaf1.cfg"] == b"! SN1 new\nend\n"
     assert now["notes.txt"] == b"mine" and set(now) == set(built)
+
+    batch["lldp"] = {serial: RuntimeError("unavailable") for serial in batch["serials"]}
+    assert cli.main(["build", "--force"]) == 1  # configs replaced, topology refused
+    assert "lab1.clab.yml was not replaced: it is from an earlier run" in capsys.readouterr().err
+    assert topology_file.read_bytes() == now["lab1.clab.yml"]  # left alone
 
     topology_file.unlink()
     topology_file.symlink_to(project / "notes.txt")

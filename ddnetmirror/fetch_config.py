@@ -569,9 +569,11 @@ def collect_tag(
     """Collect every device selected by the parsed --tag into output_dir, sequentially.
 
     Successes are kept; each failed device is reported and the rest continue.
-    Returns True only if every device was collected (and, with lab, the topology
-    was written). With report_lldp, also prints LLDP links between the found
-    devices (problems there are non-fatal). lab=(name, image) also writes a
+    Returns True only if every device was collected (with report_lldp, LLDP data
+    was retrieved for every queried device; with lab, the topology was written).
+    With report_lldp, also prints LLDP links between the found devices; a device
+    whose LLDP data is unavailable makes the run incomplete, but its links are
+    simply missing from the report and topology. lab=(name, image) also writes a
     Containerlab topology for the saved configs (requires report_lldp); image is
     an image name (--image) or an images.Selector (the default).
 
@@ -645,7 +647,7 @@ def collect_tag(
     if rules:
         print(f"wrote {len(startup)} of {written} startup configs with fixups into "
               f"{os.path.join(output_dir, LAB)}; {len(fixup_failures)} failed")
-    links, lldp_available = None, False
+    links, lldp_available, unavailable = None, False, []
     if report_lldp:
         devices = []
         for _, device in found:
@@ -655,15 +657,32 @@ def collect_tag(
                 print(f"skipped LLDP: {shown(device.key.device_id)}: no inventory hostname",
                       file=sys.stderr)
         try:
-            links, lldp_available = lldp.report_links(server, token, conn[3], devices)
+            links, lldp_available, unavailable = lldp.report_links(
+                server, token, conn[3], devices
+            )
         except Exception as exc:
             print(f"LLDP report unavailable: {shown(exc)}", file=sys.stderr)
+        if lldp_available and unavailable:
+            print(f"error: LLDP data unavailable for {len(unavailable)} of {len(devices)} "
+                  f"devices, so their links are missing: "
+                  f"{', '.join(shown(h) for h in unavailable)}", file=sys.stderr)
+    complete = not failures and not fixup_failures
+    if report_lldp and (links is None or not lldp_available or unavailable):
+        complete = False
     if lab:
-        written_topology = write_topology(
-            output_dir, lab, len(device_ids), saved, links, lldp_available, startup, force
-        )
-        return written_topology and not failures and not fixup_failures
-    return not failures and not fixup_failures
+        written_topology = False
+        try:
+            written_topology = write_topology(
+                output_dir, lab, len(device_ids), saved, links, lldp_available, startup, force,
+                unavailable,
+            )
+        finally:
+            path = topology_path(output_dir, lab[0])
+            if force and saved and not written_topology and os.path.lexists(path):
+                print(f"warning: {path} was not replaced: it is from an earlier run and may "
+                      "not match the configs written now", file=sys.stderr)
+        return written_topology and complete
+    return complete
 
 
 def package_version():
@@ -673,12 +692,14 @@ def package_version():
         return "(version unknown)"
 
 
-def write_topology(output_dir, lab, total, saved, links, lldp_available, startup=None, force=False):
+def write_topology(output_dir, lab, total, saved, links, lldp_available, startup=None, force=False,
+                   unavailable=()):
     """Write <lab>.clab.yml for the saved configs; return True if written.
 
     startup: names with a fixed-up startup config (None without fixups); only
     those become nodes, referencing configs/lab/<name>.cfg; otherwise nodes
-    reference configs/original/<name>.cfg.
+    reference configs/original/<name>.cfg. unavailable: hostnames without LLDP
+    data; those that are nodes are named in an INCOMPLETE header line.
     """
     lab_name, image = lab
     if startup is not None:
@@ -719,6 +740,10 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
     if not complete:
         missing = "a saved config" if startup is None else "a startup config"
         header.append(f"INCOMPLETE: devices without {missing}, and their links, are missing.")
+    no_lldp = sorted(n for n in saved if n in unavailable)  # valid node names: safe in YAML
+    if no_lldp:
+        header.append(f"INCOMPLETE: LLDP data unavailable for {', '.join(no_lldp)}; "
+                      "their links are missing.")
     overrides = {}
     if isinstance(image, images.Selector):
         image, overrides = choose_images(image, saved)
@@ -734,6 +759,9 @@ def write_topology(output_dir, lab, total, saved, links, lldp_available, startup
     if not complete:
         print(f"warning: {path} is INCOMPLETE: only {len(saved)} of {total} devices",
               file=sys.stderr)
+    if no_lldp:
+        print(f"warning: {path} is INCOMPLETE: links of {', '.join(no_lldp)} are missing "
+              "(LLDP data unavailable)", file=sys.stderr)
     return True
 
 
@@ -908,7 +936,7 @@ def main(argv=None, prog=None, base_dir=None):
         return 1
     if not complete:
         return 1
-    if args.lab_name:  # complete: every selected device is in the topology
+    if args.lab_name:  # complete: every selected device and its LLDP links are in the topology
         path = os.path.abspath(topology_path(args.output_dir, args.lab_name))
         print("deploy it with Containerlab, with the privileges your install needs:\n"
               f"  containerlab deploy -t {shlex.quote(path)}")
