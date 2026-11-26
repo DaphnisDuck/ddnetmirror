@@ -18,10 +18,12 @@ device hostname as shown in CloudVision inventory (any case)
 
 .TP
 \fB\-\-tag\fR \fI\,EXPR\/\fR
-device tag KEY=VALUE (exact, case\-sensitive), or an expression of such terms
-with not, and, or (in that precedence) and parentheses, e.g. '(site=lab or
-site=dr) and not role=spine'; 'not' covers EOS devices without the tag. Must
-match exactly one device unless \-\-output\-dir or \-\-list is given
+device tag KEY=VALUE (exact, case\-sensitive), a bare KEY (the tag with any
+value), or an expression of such terms with not, and, or (in that precedence)
+and parentheses, e.g. '(site=lab or site=dr) and not role=spine' or 'site=lab
+and not role'; 'not' covers EOS devices without the tag. and, or, not are
+reserved words. Must match exactly one device unless \-\-output\-dir or \-\-list is
+given
 
 .TP
 \fB\-\-exclude\-host\fR \fI\,HOSTNAME\/\fR
