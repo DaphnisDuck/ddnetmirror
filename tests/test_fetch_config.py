@@ -14,6 +14,7 @@ from ddnetmirror import cli, fetch_config, images, topology
 from ddnetmirror.output import FetchError
 
 TOKEN = "secret-token-value"
+SYSTEM, USER = tag.CreatorType.SYSTEM, tag.CreatorType.USER
 
 
 @pytest.fixture
@@ -21,6 +22,8 @@ def cv(monkeypatch, tmp_path):
     """Stub CloudVision: `serials`/`version`/`hostname` for inventory (`hostnames`,
     `versions` override per serial), `tagged` device_ids for tag assignments (or
     `tags` {serial: {label: value}} to answer each label=value query exactly),
+    `eos` {serial: (value, creator type)} for the EOS eligibility query (None: every
+    known device has a system eos tag; an Exception value is raised),
     `result` for get_config (`results` override per serial), `lldp` notifications
     per serial for the Connector (an Exception value is raised)."""
     state = {
@@ -35,6 +38,7 @@ def cv(monkeypatch, tmp_path):
         "connector": [],
         "tagged": [],
         "tags": {},
+        "eos": None,
         "tag_filters": [],
         "result": {"config": "", "errors": [], "filter_codes": [], "sources": []},
         "filters": [],
@@ -67,6 +71,18 @@ def cv(monkeypatch, tmp_path):
         async def get_all(self, request, timeout=None):
             state["tag_filters"].extend(request.partial_eq_filter)
             key = request.partial_eq_filter[0].key
+            if key.label == "eos" and key.value is None:  # the EOS eligibility query
+                if isinstance(state["eos"], Exception):
+                    raise state["eos"]
+                eos = state["eos"]
+                if eos is None:  # default: every known device is EOS
+                    eos = {s: ("4.32", SYSTEM)
+                           for s in [*state["serials"], *state["tagged"], *state["tags"]]}
+                for device_id, (value, creator) in eos.items():  # creator not filtered here
+                    yield tag.TagAssignmentStreamResponse(value=tag.TagAssignment(
+                        key=tag.TagAssignmentKey(label="eos", value=value, device_id=device_id),
+                        tag_creator_type=creator))
+                return
             tagged = [s for s, tags in state["tags"].items() if tags.get(key.label) == key.value]
             for device_id in tagged or state["tagged"]:
                 yield tag.TagAssignmentStreamResponse(
@@ -305,7 +321,13 @@ def test_selects_device_by_tag(cv, tmp_path, capsys):
     assert (tmp_path / "leaf1.cfg").read_bytes() == config.encode("utf-8")
     out = capsys.readouterr().out
     assert "leaf1" in out and "EOS 4.32.1F" in out
-    key = cv["tag_filters"][0].key
+    eligibility, term = cv["tag_filters"]  # one EOS eligibility query, one per term
+    key = eligibility.key  # every value (unset, not ""), system-generated only
+    assert (key.workspace_id, key.element_type, key.label, key.value) == (
+        "", tag.ElementType.DEVICE, "eos", None,
+    )
+    assert eligibility.tag_creator_type == SYSTEM
+    key = term.key
     assert (key.workspace_id, key.element_type, key.label, key.value) == (
         "", tag.ElementType.DEVICE, "role", "leaf",
     )
@@ -1474,3 +1496,80 @@ def test_exclude_host_requires_tag_selection(cv, capsys):
 
     assert exc.value.code == 2
     assert "--exclude-host requires --tag" in capsys.readouterr().err
+
+
+@pytest.fixture
+def mixed(cv):
+    """Mixed inventory: only devices with a system-generated eos tag are EOS.
+    SN2's eos value is empty, SN3 has no EOS version, SN4's eos tag is
+    operator-created, SN5 has none (third-party)."""
+    cv["serials"] = ["SN1", "SN2", "SN3", "SN4", "SN5"]
+    cv["hostnames"] = {"SN1": "leaf1", "SN2": "leaf2", "SN3": "spine1", "SN4": "cisco1",
+                       "SN5": "cisco2"}
+    cv["versions"] = {"SN1": "4.32.1F", "SN2": "4.31.0F"}
+    cv["tags"] = {"SN1": {"site": "lab", "role": "leaf"}, "SN2": {"site": "lab", "role": "leaf"},
+                  "SN3": {"site": "lab", "role": "spine"},
+                  "SN4": {"site": "lab", "role": "leaf", "eos": "x"},
+                  "SN5": {"site": "lab", "vendor": "cisco"}}
+    cv["eos"] = {"SN1": ("4.32.1F", SYSTEM), "SN2": ("", SYSTEM), "SN3": ("any", SYSTEM),
+                 "SN4": ("x", USER)}
+    for serial in cv["serials"]:
+        cv["results"][serial] = {"config": f"! {serial}\nend", "errors": []}
+    return cv
+
+
+@pytest.mark.parametrize("expression, selected", [
+    ("site=lab", ["SN1", "SN2", "SN3"]),
+    ("not role=spine", ["SN1", "SN2"]),  # NOT covers eligible EOS devices only
+    ("not eos=x", ["SN1", "SN2", "SN3"]),  # negating an eos term adds no third-party device
+    ("eos=x or role=leaf", ["SN1", "SN2"]),  # an operator eos tag confers nothing
+])
+def test_boolean_selection_never_includes_non_eos_devices(mixed, expression, selected):
+    conn = ("cv.example", 443, TOKEN, None)
+
+    assert fetch_config.find_tagged_device_ids(conn, fetch_config.parse_tag(expression)) == selected
+
+
+def test_non_eos_devices_are_left_out_of_list_hostname_and_tag_selection(mixed, capsys):
+    assert run("--list", selector=("--tag", "site=lab")) == 0
+    captured = capsys.readouterr()
+    assert captured.out.split() == ["leaf1", "SN1", "4.32.1F", "leaf2", "SN2", "4.31.0F",
+                                    "spine1", "SN3", "unknown"]
+    assert "left out (not EOS: no system-generated eos tag): SN4, SN5" in captured.err
+
+    assert run("--list", selector=("--hostname", "CISCO1")) == 1
+    assert ("error: hostname 'CISCO1' is not an eligible EOS device (no system-generated eos "
+            "tag in CloudVision): cisco1 (SN4)") in capsys.readouterr().err
+
+    assert run("--list", selector=("--tag", "vendor=cisco")) == 1
+    assert "error: no eligible EOS device with tag vendor=cisco" in capsys.readouterr().err
+    assert mixed["compliance_calls"] == []
+
+
+def test_collection_lldp_and_topology_cover_eos_devices_only(mixed, tmp_path, capsys):
+    mixed["lldp"] = {
+        "SN1": [port("Ethernet1"), port("Ethernet2"), nbr("Ethernet1", "spine1", "Ethernet49/1"),
+                nbr("Ethernet2", "cisco2", "Gi0/1")],
+        "SN3": [port("Ethernet49/1"), nbr("Ethernet49/1", "leaf1", "Ethernet1")],
+    }
+
+    assert run("--exclude-host", "cisco2", selector=(
+        "--tag", "site=lab", "--output-dir", "lab", "--lldp", "--lab-name", "lab1",
+        "--image", "ceos:1")) == 0
+
+    assert sorted(mixed["config_ids"]) == ["SN1", "SN2", "SN3"]  # never fetched for SN4/SN5
+    err = capsys.readouterr().err
+    assert "warning: excluded host 'cisco2' matches no device selected by tag" in err
+    assert "leaf1 Ethernet2 -> cisco2 Gi0/1: not in selection" in err
+    text = (tmp_path / "lab" / "lab1.clab.yml").read_text()
+    assert "3 of 3 devices collected; 1 links." in text and "cisco" not in text
+
+
+def test_failed_eligibility_lookup_is_an_error_not_an_unrestricted_selection(mixed, capsys):
+    mixed["eos"] = RuntimeError("unavailable")
+
+    for selector in (("--tag", "site=lab"), ("--hostname", "leaf1")):
+        assert run("--list", selector=selector) == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "error: EOS eligibility lookup (system eos tag) failed: unavailable" in captured.err
