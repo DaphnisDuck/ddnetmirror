@@ -42,7 +42,7 @@
 
 - Apply fixup rules to a copy of one config file:
 
-`ddn fixup {{lab1/configs/collected/leaf1.cfg}} --rules {{rules.yml}} --output {{leaf1-lab.cfg}}`
+`ddn fixup {{lab1/configs/original/leaf1.cfg}} --rules {{rules.yml}} --output {{leaf1-lab.cfg}}`
 
 - Check a fixup rule file without reading or writing any config:
 

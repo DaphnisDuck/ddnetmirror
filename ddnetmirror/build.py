@@ -107,7 +107,7 @@ def build_parser(prog=None):
     parser.add_argument(
         "--force",
         action="store_true",
-        help="replace existing generated files (collected and startup configs, topology) as "
+        help="replace existing generated files (original and lab configs, topology) as "
         "ddn fetch --force does; no backups, other files untouched. Rebuild only when that is "
         "safe for your lab",
     )
