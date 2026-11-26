@@ -69,3 +69,18 @@ def test_docker_problems_and_no_usable_image_are_clear_errors(docker, change, me
 
     with pytest.raises(images.ImageError, match=message):
         images.Selector()
+
+
+def test_docker_does_not_inherit_the_cloudvision_token(monkeypatch):
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen.update(kwargs["env"])
+        return subprocess.CompletedProcess(command, 0, "ceos:4.34.2F\n", "")
+
+    monkeypatch.setattr(images.subprocess, "run", fake_run)
+    monkeypatch.setenv("CLOUDVISION_TOKEN", "secret")
+    monkeypatch.setenv("DOCKER_HOST", "unix:///run/docker.sock")
+
+    assert images.local_tags("ceos") == ["4.34.2F"]
+    assert "CLOUDVISION_TOKEN" not in seen and seen["DOCKER_HOST"] == "unix:///run/docker.sock"

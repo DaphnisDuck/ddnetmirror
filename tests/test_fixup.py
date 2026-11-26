@@ -339,6 +339,23 @@ def test_check_validates_rules_only(tmp_path, capsys, monkeypatch, rules, code, 
     assert [p.name for p in tmp_path.iterdir()] == ["rules.yml"]
 
 
+@pytest.mark.parametrize("bad, argv", [
+    ("in.cfg", ["in.cfg", "--rules", "rules.yml", "--output", "out.cfg"]),
+    ("rules.yml", ["in.cfg", "--rules", "rules.yml", "--output", "out.cfg"]),
+    ("rules.yml", ["--check", "rules.yml"]),
+])
+def test_non_utf8_file_is_named_in_the_error(tmp_path, capsys, monkeypatch, bad, argv):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "in.cfg").write_text("hostname leaf1\n")
+    (tmp_path / "rules.yml").write_text("- {op: replace, match: leaf1, with: lab-leaf1}\n")
+    (tmp_path / bad).write_bytes(b"hostname caf\xe9\n")  # Latin-1
+
+    assert fixup.main(argv) == 1
+
+    assert capsys.readouterr().err.startswith(f"error: {bad}: not UTF-8 text (")
+    assert not (tmp_path / "out.cfg").exists()
+
+
 def test_check_rejects_input_and_output_arguments(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         fixup.main(["--check", "rules.yml", "in.cfg", "--output", str(tmp_path / "out.cfg")])

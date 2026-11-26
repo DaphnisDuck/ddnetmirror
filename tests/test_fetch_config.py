@@ -615,6 +615,7 @@ def test_batch_never_overwrites_existing_file(batch, tmp_path, capsys):
     [
         ({"SN2": "../escaped"}, ["SN2"]),
         ({"SN2": "leaf1"}, ["SN1", "SN2"]),
+        ({"SN2": "LEAF1"}, ["SN1", "SN2"]),  # case-insensitive file systems would collide
     ],
 )
 def test_batch_rejects_unsafe_or_colliding_names(batch, tmp_path, capsys, hostnames, rejected):
@@ -629,6 +630,57 @@ def test_batch_rejects_unsafe_or_colliding_names(batch, tmp_path, capsys, hostna
     )
     err = capsys.readouterr().err
     assert all(f"({serial})" in err for serial in rejected)
+
+
+def test_new_configs_directories_are_owner_only_and_existing_ones_untouched(batch, tmp_path):
+    (tmp_path / "lab" / "configs").mkdir(parents=True, mode=0o755)
+    (tmp_path / "lab" / "configs").chmod(0o755)  # independent of the umask
+
+    assert run_batch() == 0
+
+    assert stat.S_IMODE((tmp_path / "lab" / "configs").stat().st_mode) == 0o755  # never chmod-ed
+    assert stat.S_IMODE((tmp_path / "lab" / "configs" / "original").stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize("server, parsed", [
+    ("cv.example", ("cv.example", 443)), ("cv.example:8443", ("cv.example", 8443)),
+    ("[2001:db8::1]", ("2001:db8::1", 443)), ("[2001:db8::1]:8443", ("2001:db8::1", 8443)),
+])
+def test_parse_server_unbrackets_ipv6(server, parsed):
+    assert fetch_config.parse_server(server) == parsed
+
+
+@pytest.mark.parametrize("server, message", [
+    ("2001:db8::1", "put an IPv6 address in brackets"),
+    ("[2001:db8::1", "invalid --server"), ("[2001:db8::1]8443", "invalid --server"),
+    ("cv.example:https", "invalid port"),
+])
+def test_parse_server_rejects_ambiguous_or_malformed(server, message):
+    with pytest.raises(FetchError, match=re.escape(message)):
+        fetch_config.parse_server(server)
+
+
+def test_bracketed_ipv6_server_reaches_each_client_in_its_format(batch, monkeypatch):
+    hosts = []
+    monkeypatch.setattr(fetch_config.AsyncCVClient, "from_token", classmethod(
+        lambda cls, token, host, **kw: hosts.append((host, kw["port"])) or contextlib.nullcontext()))
+
+    assert fetch_config.main(["--server", "[2001:db8::1]:8443", "--tag", "site=lab",
+                              "--output-dir", "lab", "--lldp"]) == 0
+
+    assert set(hosts) == {("2001:db8::1", 8443)}  # grpclib: a bare address
+    assert batch["compliance_calls"][0][0] == "[2001:db8::1]:8443"  # grpcio: host:port target
+    assert batch["connector"][0][0] == "[2001:db8::1]:8443"
+
+
+def test_ctrl_c_exits_130_without_a_traceback(cv, monkeypatch, capsys):
+    def interrupted(*args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(fetch_config, "run", interrupted)
+
+    assert run() == 130
+    assert capsys.readouterr().err == "interrupted\n"
 
 
 LLDP_LOCAL = ["Sysdb", "l2discovery", "lldp", "status", "local", "1", "portStatus"]
@@ -717,6 +769,29 @@ def test_lldp_never_turns_unclear_observations_into_links(batch, capsys, case, r
     assert "LLDP links between selected devices: 0" in out.out
     assert "<->" not in out.out
     assert reason in out.err
+
+
+def test_lldp_report_says_so_when_every_query_fails(batch, capsys):
+    batch["lldp"] = {serial: RuntimeError("unavailable") for serial in batch["serials"]}
+
+    assert run_lldp() == 1
+
+    assert "error: LLDP data unavailable for all 3 queried devices; no links are known" in \
+        capsys.readouterr().err
+
+
+@pytest.mark.parametrize("runner, message", [
+    (run_lldp, "error: no inventory hostname, so no LLDP links or topology node "
+               "(config saved as <serial>.cfg): SN2"),
+    (lambda: run_topology(), "topology not written: devices without an inventory hostname"),
+])
+def test_device_without_hostname_makes_the_run_incomplete(batch, tmp_path, capsys, runner, message):
+    batch["hostnames"]["SN2"] = ""
+
+    assert runner() == 1
+
+    assert (tmp_path / "lab" / "configs" / "original" / "SN2.cfg").exists()
+    assert message in capsys.readouterr().err
 
 
 def test_lldp_skips_links_sharing_an_interface(batch, capsys):

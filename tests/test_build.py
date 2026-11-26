@@ -145,3 +145,15 @@ def test_loading_the_project_runs_nothing(lab, tmp_path):
                        "cacert": "/etc/ca.pem", "fixup-rules": "none"}
     assert build.load_project(".")["name"] == "lab1"
     assert lab["fetch"] == []
+
+
+def test_tilde_in_project_paths_is_expanded(lab, monkeypatch, tmp_path):
+    # relative paths stay relative to the project directory (first test above)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    with open("ddnetmirror.yml", "a") as f:
+        f.write("cacert: ~/ca.pem\nfixup-rules: ~/rules.yml\n")
+
+    project = build.load_project(".")
+
+    assert project["cacert"] == str(tmp_path / "home" / "ca.pem")
+    assert project["fixup-rules"] == str(tmp_path / "home" / "rules.yml")
