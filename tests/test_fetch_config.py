@@ -21,9 +21,10 @@ SYSTEM, USER = tag.CreatorType.SYSTEM, tag.CreatorType.USER
 def cv(monkeypatch, tmp_path):
     """Stub CloudVision: `serials`/`version`/`hostname` for inventory (`hostnames`,
     `versions` override per serial), `tagged` device_ids for tag assignments (or
-    `tags` {serial: {label: value}} to answer each label=value query exactly),
-    `eos` {serial: (value, creator type)} for the EOS eligibility query (None: every
-    known device has a system eos tag; an Exception value is raised),
+    `tags` {serial: {label: value}} to answer each label=value or any-value label
+    query exactly), `eos` {serial: (value, creator type)} for the EOS eligibility
+    query and eos tag queries (None: every known device has a system eos tag; an
+    Exception value is raised),
     `result` for get_config (`results` override per serial), `lldp` notifications
     per serial for the Connector (an Exception value is raised)."""
     state = {
@@ -71,19 +72,24 @@ def cv(monkeypatch, tmp_path):
         async def get_all(self, request, timeout=None):
             state["tag_filters"].extend(request.partial_eq_filter)
             key = request.partial_eq_filter[0].key
-            if key.label == "eos" and key.value is None:  # the EOS eligibility query
-                if isinstance(state["eos"], Exception):
-                    raise state["eos"]
-                eos = state["eos"]
-                if eos is None:  # default: every known device is EOS
-                    eos = {s: ("4.32", SYSTEM)
-                           for s in [*state["serials"], *state["tagged"], *state["tags"]]}
+            eos = state["eos"]
+            if eos is None:  # default: every known device is EOS
+                eos = {s: ("4.32", SYSTEM)
+                       for s in [*state["serials"], *state["tagged"], *state["tags"]]}
+            eligibility = request.partial_eq_filter[0].tag_creator_type == SYSTEM
+            if key.label == "eos" and key.value is None and eligibility:
+                if isinstance(eos, Exception):
+                    raise eos
                 for device_id, (value, creator) in eos.items():  # creator not filtered here
                     yield tag.TagAssignmentStreamResponse(value=tag.TagAssignment(
                         key=tag.TagAssignmentKey(label="eos", value=value, device_id=device_id),
                         tag_creator_type=creator))
                 return
-            tagged = [s for s, tags in state["tags"].items() if tags.get(key.label) == key.value]
+            assigned = {s: tags.get(key.label) for s, tags in state["tags"].items()}
+            if key.label == "eos" and not isinstance(eos, Exception):  # system eos tags too
+                assigned.update({s: value for s, (value, _) in eos.items()})
+            tagged = [s for s, value in assigned.items()  # unset query value: any value
+                      if value is not None and key.value in (None, value)]
             for device_id in tagged or state["tagged"]:
                 yield tag.TagAssignmentStreamResponse(
                     value=tag.TagAssignment(key=tag.TagAssignmentKey(device_id=device_id))
@@ -375,7 +381,7 @@ def test_tag_does_not_overwrite_default_output(cv, tmp_path):
 @pytest.mark.parametrize(
     "selector",
     [
-        ("--tag", "role"),
+        ("--tag", "not"),
         ("--tag", "=leaf"),
         ("--tag", "role="),
         ("--hostname", "leaf1", "--tag", "role=leaf"),
@@ -426,6 +432,14 @@ TAGS = {  # SN4 has no role tag
     ("site=lab AND NOT role=spine", ["SN1", "SN4"]),  # operators in any case
     ("(site=lab Or site=dr) aNd role=leaf", ["SN1", "SN2"]),
     ("Role=leaf OR site=dr", ["SN2"]),
+    ("role", ["SN1", "SN2", "SN3"]),  # a bare KEY: the tag with any value
+    ("not role", ["SN4"]),
+    ("NOT role", ["SN4"]),
+    ("site=lab and not role", ["SN4"]),
+    ("site=lab and (role=leaf or not role)", ["SN1", "SN4"]),
+    ("(role)", ["SN1", "SN2", "SN3"]),
+    ("Role", []),  # bare keys are case-sensitive too
+    ("not site", []),
 ])
 def test_tag_expressions_select_sorted_distinct_devices(cv, expression, selected):
     cv["serials"], cv["tags"] = list(TAGS), TAGS
@@ -440,21 +454,44 @@ def test_tag_expressions_select_sorted_distinct_devices(cv, expression, selected
 
 
 @pytest.mark.parametrize("expression, message", [
-    ("", "expected KEY=VALUE, got ''"),
-    ("site=lab and", "it ends where a KEY=VALUE, 'not' or '(' is expected"),
+    ("", "it is empty"),
+    ("site=lab and", "it ends where a KEY, KEY=VALUE, 'not' or '(' is expected"),
     ("or site=lab", "unexpected 'or'"),
     ("site=lab and or role=leaf", "unexpected 'or'"),
-    ("not", "it ends where"),
     ("(site=lab or site=dr", "missing ')'"),
     ("site=lab or site=dr)", "unexpected ')'"),
-    ("site=lab and role", "expected KEY=VALUE, got 'role'"),
-    ("site=lab and role=", "expected KEY=VALUE, got 'role='"),
+    ("site=lab and role=", "expected KEY or KEY=VALUE, got 'role='"),
+    ("site=lab and =leaf", "expected KEY or KEY=VALUE, got '=leaf'"),
+    ("not", "'not' is an operator, not a tag key"),  # reserved words are never a bare KEY
+    ("AND", "'and' is an operator, not a tag key"),
+    (" or ", "'or' is an operator, not a tag key"),
+    ("site=lab and and", "unexpected 'and'"),
+    ("my role", "unexpected 'role'"),  # a bare KEY has no whitespace
     ("site=lab AND", "it ends where"),
     ("OR site=lab", "unexpected 'or'"),
 ])
 def test_bad_tag_expressions_are_syntax_errors(expression, message):
     with pytest.raises(argparse.ArgumentTypeError, match=re.escape(message)):
         fetch_config.parse_tag(expression)
+
+
+def test_bare_key_queries_the_tag_with_any_value(cv):
+    cv["serials"], cv["tags"] = list(TAGS), TAGS
+    conn = ("cv.example", 443, TOKEN, None)
+
+    fetch_config.find_tagged_device_ids(conn, fetch_config.parse_tag("role"))
+
+    query = cv["tag_filters"][-1]  # value unset (not ""): any value; no creator filter
+    assert (query.key.label, query.key.value, query.tag_creator_type) == ("role", None, 0)
+
+
+def test_list_selects_by_bare_key(cv, capsys):
+    cv["serials"], cv["tags"] = list(TAGS), TAGS
+    cv["hostnames"] = {"SN1": "leaf1", "SN2": "leaf2", "SN3": "spine1", "SN4": "border1"}
+
+    assert run("--list", selector=("--tag", "site=lab and NOT role")) == 0
+
+    assert capsys.readouterr().out.split() == ["border1", "SN4", "unknown"]
 
 
 def test_plain_tag_without_operator_words_is_unchanged():
@@ -1523,11 +1560,24 @@ def mixed(cv):
     ("not role=spine", ["SN1", "SN2"]),  # NOT covers eligible EOS devices only
     ("not eos=x", ["SN1", "SN2", "SN3"]),  # negating an eos term adds no third-party device
     ("eos=x or role=leaf", ["SN1", "SN2"]),  # an operator eos tag confers nothing
+    ("eos", ["SN1", "SN2", "SN3"]),  # a bare key, no special case: SN4 is still left out
+    ("not vendor", ["SN1", "SN2", "SN3"]),
 ])
 def test_boolean_selection_never_includes_non_eos_devices(mixed, expression, selected):
     conn = ("cv.example", 443, TOKEN, None)
 
     assert fetch_config.find_tagged_device_ids(conn, fetch_config.parse_tag(expression)) == selected
+
+
+@pytest.mark.parametrize("expression, message", [
+    ("not eos", "no device with tag not eos"),  # every eligible device has the eos tag
+    ("vendor", "no eligible EOS device with tag vendor"),  # SN5 is third-party
+])
+def test_bare_key_selection_stays_within_eligible_devices(mixed, expression, message):
+    conn = ("cv.example", 443, TOKEN, None)
+
+    with pytest.raises(FetchError, match=re.escape(message)):
+        fetch_config.find_tagged_device_ids(conn, fetch_config.parse_tag(expression))
 
 
 def test_non_eos_devices_are_left_out_of_list_hostname_and_tag_selection(mixed, capsys):

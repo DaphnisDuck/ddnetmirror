@@ -173,7 +173,7 @@ def test_containerlab_runs_without_sudo_as_root(lab, monkeypatch):
     ("name: lab1\ntag: site=lab\n", "missing server"),
     ("server: cv\ntag: site=lab\n", "missing name"),
     ("server: cv\nname: lab1\n", "missing tag"),
-    ("server: cv\nname: lab1\ntag: site\n", "expected KEY=VALUE, got 'site'"),
+    ("server: cv\nname: lab1\ntag: not\n", "'not' is an operator, not a tag key"),
     ("server: cv\nname: lab1\ntag: site=lab and\n", "bad tag expression 'site=lab and'"),
     ("server: cv\nname: -lab\ntag: site=lab\n", "is not a valid Containerlab lab name"),
     ("server: 443\nname: lab1\ntag: site=lab\n", "server must be a non-empty string"),
