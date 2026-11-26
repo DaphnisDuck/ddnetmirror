@@ -61,7 +61,8 @@ def list_inventory(host, port, token, ca_file):
 
 
 def find_device_by_hostname(host, port, token, ca_file, hostname):
-    """Return the one inventory record whose hostname equals hostname ignoring case.
+    """Return the one eligible EOS inventory record (see eos_device_ids) whose
+    hostname equals hostname ignoring case.
 
     Lists the whole inventory (CloudVision filters match exactly) and compares
     casefolded; the record keeps its CloudVision hostname. Several devices whose
@@ -69,9 +70,15 @@ def find_device_by_hostname(host, port, token, ca_file, hostname):
     """
     devices = list_inventory(host, port, token, ca_file)
     wanted = hostname.casefold()
-    found = [d for d in devices if (d.hostname or "").casefold() == wanted]
-    if not found:
+    matches = [d for d in devices if (d.hostname or "").casefold() == wanted]
+    if not matches:
         raise FetchError(f"no device with hostname {hostname!r} (any case) in inventory")
+    eligible = eos_device_ids(host, port, token, ca_file)
+    found = [d for d in matches if d.key.device_id in eligible]
+    if not found:
+        listed = ", ".join(f"{shown(d.hostname)} ({shown(d.key.device_id)})" for d in matches)
+        raise FetchError(f"hostname {hostname!r} is not an eligible EOS device (no "
+                         f"system-generated eos tag in CloudVision): {listed}")
     if len(found) > 1:
         listed = ", ".join(f"{d.hostname} ({d.key.device_id})" for d in found)
         raise FetchError(f"{len(found)} devices with hostname {hostname!r} ignoring case: {listed}")
@@ -96,13 +103,44 @@ def tagged_device_ids(host, port, token, ca_file, label, value):
     return {a.key.device_id for a in assignments}
 
 
+EOS_TAG_LABEL = "eos"
+
+
+def eos_device_ids(host, port, token, ca_file):
+    """Return the set of device_ids eligible for collection: devices with a
+    system-generated eos tag (any value) in mainline.
+
+    One query for every value: the tag value is left unset, which CloudVision's
+    partial_eq_filter treats as "any" (an empty string would match only an
+    empty value). The creator type is filtered by the server, as Arista's cvlib
+    does, and checked again here so an operator-created eos tag never counts.
+    A failed query is an error, never an unrestricted selection."""
+    key = tag.TagAssignmentKey(
+        workspace_id="", element_type=tag.ElementType.DEVICE, label=EOS_TAG_LABEL
+    )
+    request = tag.TagAssignmentStreamRequest(partial_eq_filter=[
+        tag.TagAssignment(key=key, tag_creator_type=tag.CreatorType.SYSTEM)
+    ])
+    try:
+        assignments = asyncio.run(
+            _get_all(host, port, token, ca_file, tag.TagAssignmentServiceStub, request)
+        )
+    except Exception as exc:
+        raise FetchError(f"EOS eligibility lookup (system eos tag) failed: {exc}") from exc
+    return {a.key.device_id for a in assignments
+            if a.tag_creator_type == tag.CreatorType.SYSTEM and a.key.label == EOS_TAG_LABEL}
+
+
 def find_tagged_device_ids(conn, selection, exclude=()):
-    """Return the sorted distinct device_ids selected by a parsed --tag (at least one).
+    """Return the sorted distinct eligible EOS device_ids (see eos_device_ids)
+    selected by a parsed --tag (at least one).
 
     Each KEY=VALUE term is one tag assignment query; "not" is taken against the
-    whole inventory, so "not role=spine" includes devices without a role tag.
+    eligible EOS inventory, so "not role=spine" includes EOS devices without a
+    role tag. Tagged devices that are not eligible are left out with a note.
     exclude: --exclude-host hostnames, dropped from the selection (see exclude_hosts)."""
     text, tree = selection
+    eligible = eos_device_ids(*conn)
     terms, universe = {}, []
 
     def ids(node):
@@ -112,14 +150,20 @@ def find_tagged_device_ids(conn, selection, exclude=()):
             return terms[node]
         if node[0] == "not":
             if not universe:
-                universe.append({d.key.device_id for d in list_inventory(*conn)})
+                universe.append({d.key.device_id for d in list_inventory(*conn)} & eligible)
             return universe[0] - ids(node[1])
         left, right = ids(node[1]), ids(node[2])
         return left & right if node[0] == "and" else left | right
 
-    device_ids = sorted(ids(tree))
+    selected = ids(tree)
+    device_ids = sorted(selected & eligible)
+    left_out = sorted(selected - eligible)
+    if left_out:
+        print(f"left out (not EOS: no system-generated eos tag): "
+              f"{', '.join(shown(i) for i in left_out)}", file=sys.stderr)
     if not device_ids:
-        raise FetchError(f"no device with tag {text}")
+        what = "eligible EOS device" if left_out else "device"
+        raise FetchError(f"no {what} with tag {text}")
     return exclude_hosts(conn, text, device_ids, exclude) if exclude else device_ids
 
 
@@ -712,6 +756,7 @@ def build_parser(prog=None):
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Fetch running configs from CloudVision and save them unchanged. "
+        "Only EOS devices are selected: those with CloudVision's system-generated eos tag. "
         f"The service-account token is read from --token-file, else from {TOKEN_ENV}, "
         "else from $XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token)."
     )
@@ -726,7 +771,7 @@ def build_parser(prog=None):
         metavar="EXPR",
         help="device tag KEY=VALUE (exact, case-sensitive), or an expression of such terms "
         "with not, and, or (in that precedence) and parentheses, e.g. "
-        "'(site=lab or site=dr) and not role=spine'; 'not' covers devices without the tag. "
+        "'(site=lab or site=dr) and not role=spine'; 'not' covers EOS devices without the tag. "
         "Must match exactly one device unless --output-dir or --list is given",
     )
     parser.add_argument(

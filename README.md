@@ -138,6 +138,16 @@ leaf2 Ethernet2 <-> spine2 Ethernet2 [one-sided]
 wrote Containerlab topology lab1/lab1.clab.yml (4 nodes, 5 links)
 ```
 
+### Only EOS devices are selected
+
+CloudVision inventory can include third-party devices (for example Cisco switches) that have no EOS running config. ddnetmirror only ever selects **eligible EOS devices**: devices that carry CloudVision's **system-generated `eos` tag**, with any value (the value isn't read).
+
+- **Everywhere.** `--hostname`, `--tag` (including the universe of `not`), `--list`, `--exclude-host`, collection, LLDP, the topology and `ddn up` all use only eligible devices. A non-EOS device's config is never fetched, it never becomes a node, and LLDP links to it are skipped as `not in selection`. A Boolean expression can't bring one back in: `not role=spine` and `not eos=x` cover eligible EOS devices only.
+- **Messages.** Tagged devices that aren't eligible are listed once on stderr (`left out (not EOS: no system-generated eos tag): SN-SW1`). A tag that matches only non-EOS devices fails with `no eligible EOS device with tag …`; a `--hostname` of a non-EOS device fails with `… is not an eligible EOS device …`.
+- **Operator tags don't count.** An `eos` tag you create yourself confers nothing; you can still use it as an ordinary term in `--tag`.
+- **One extra lookup.** Eligibility is one tag query per run. If it fails, the run stops with an error; it never falls back to selecting everything.
+- **Limitation.** An EOS device that lacks the system `eos` tag is excluded. This boundary was checked by owner observation on on-prem CVP and on CVaaS (every observed EOS device had the tag, no observed third-party device did); it is not an Arista compatibility guarantee. An unknown EOS version doesn't matter: such a device is still selected.
+
 ### Tag expressions
 
 `--tag` takes one `KEY=VALUE` or a small Boolean expression of them:
@@ -156,7 +166,7 @@ not role=spine
 ```
 
 - **Operators.** `not`, `and` and `or`, in that order of precedence, with parentheses for grouping: `site=dr or site=lab and role=spine` means `site=dr or (site=lab and role=spine)`. Operators are words in any case (`and`, `AND`, `And`) separated by whitespace or parentheses.
-- **Terms** match a CloudVision device tag exactly, including case. `not role=spine` selects every inventory device without that tag, including devices with no `role` tag at all.
+- **Terms** match a CloudVision device tag exactly, including case. `not role=spine` selects every eligible EOS device in inventory without that tag, including devices with no `role` tag at all (see [Only EOS devices are selected](#only-eos-devices-are-selected)).
 - **Plain tags are unchanged.** A `--tag` without a standalone `and`, `or` or `not` word in any case (separated by whitespace or parentheses) is one `KEY=VALUE`, as before. Its value may contain spaces or parentheses (`site=New York`). Operator words inside a term are just text (`team=and` is a plain tag).
 - **Limitation: standalone operator words are reserved.** A plain tag whose value contains `and`, `or` or `not` in any case as a separate word, such as `description=research and development`, is read as an expression and refused with a syntax error (exit 2). Such a tag can't be selected with `--tag` for now.
 - **Inside an expression,** a term can't contain whitespace or parentheses; such a tag can't be combined, and the expression is refused with a syntax error. There is no quoting.
@@ -444,6 +454,7 @@ Rules are plain text editing:
 - **Live CVP/CVaaS compatibility is unverified** (#7). The CloudVision calls follow the `cloudvision` Python library's source and examples.
   - The code is tested against stubbed responses (`pytest`).
   - It was also tested in a human-run synthetic test drive (#22): Containerlab 0.83.0 with `ceos:4.35.7.2M`, four nodes, BGP and ECMP up, and the slash-form link `Ethernet49/1` ↔ `eth49_1` passing traffic.
+- **EOS eligibility is the system `eos` tag.** EOS devices without CloudVision's system-generated `eos` tag are never selected (see [Only EOS devices are selected](#only-eos-devices-are-selected)). Verified by owner observation on on-prem CVP and CVaaS only.
 - **Image choice is by version string only.** `--image IMAGE` applies to every node. Without it, local `ceos` tags are matched to inventory versions (see above), with no knowledge of platforms or compatibility. You can always override a node in the YAML by hand.
 - **LLDP matching is conservative.** A neighbour becomes a link only if:
   - its LLDP system name exactly matches the hostname of one selected device;

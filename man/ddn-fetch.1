@@ -5,7 +5,7 @@ ddn fetch \- fetch running configs, LLDP links and a Containerlab topology from 
 .B ddn
 fetch [-h] --server SERVER (--hostname HOSTNAME | --tag EXPR) [--exclude-host HOSTNAME] [--list] [--ca-file CA_FILE] [--token-file PATH] [--output OUTPUT | --output-dir OUTPUT_DIR] [--lldp] [--lab-name LAB_NAME] [--image IMAGE] [--fixup-rules RULES.yml] [--verbose] [--force]
 .SH DESCRIPTION
-Fetch running configs from CloudVision and save them unchanged. The service\-account token is read from \-\-token\-file, else from CLOUDVISION_TOKEN, else from $XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token).
+Fetch running configs from CloudVision and save them unchanged. Only EOS devices are selected: those with CloudVision's system\-generated eos tag. The service\-account token is read from \-\-token\-file, else from CLOUDVISION_TOKEN, else from $XDG_CONFIG_HOME/ddnetmirror/token (default ~/.config/ddnetmirror/token).
 
 .SH OPTIONS
 .TP
@@ -20,8 +20,8 @@ device hostname as shown in CloudVision inventory (any case)
 \fB\-\-tag\fR \fI\,EXPR\/\fR
 device tag KEY=VALUE (exact, case\-sensitive), or an expression of such terms
 with not, and, or (in that precedence) and parentheses, e.g. '(site=lab or
-site=dr) and not role=spine'; 'not' covers devices without the tag. Must match
-exactly one device unless \-\-output\-dir or \-\-list is given
+site=dr) and not role=spine'; 'not' covers EOS devices without the tag. Must
+match exactly one device unless \-\-output\-dir or \-\-list is given
 
 .TP
 \fB\-\-exclude\-host\fR \fI\,HOSTNAME\/\fR
