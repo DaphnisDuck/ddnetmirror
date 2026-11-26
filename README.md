@@ -15,7 +15,9 @@ It is a configuration-preserving copier, a text-fixup tool and a topology genera
 
 ## Status
 
-Early software, version 0.0.1. The full workflow passed a human-run, offline, synthetic four-node Containerlab test (cEOS 4.35.7.2M, Containerlab 0.83.0; #22). It has **not** yet been qualified against live CloudVision (CVP or CVaaS; #7), so expect rough edges and try it on a non-production selection first.
+Feature-complete and stable for its intended use. It has been tested live against on-prem CloudVision Portal (CVP) 2026.3.0 and CVaaS (#7), and the generated topologies have been deployed successfully as cEOS labs. The full workflow also passed a synthetic four-node Containerlab test (cEOS 4.35.7.2M, Containerlab 0.83.0; #22).
+
+That is the tested scope, not a compatibility guarantee: other CloudVision releases, EOS/cEOS versions and Containerlab versions may behave differently, and whether a given production config boots cleanly on cEOS depends on your fixup rules. Try a new environment on a small selection first (`--list` helps), and see [Known limitations](#known-limitations).
 
 ## Handle generated files with care
 
@@ -26,6 +28,16 @@ Saved running configs are real device configs. They can contain hashed credentia
 - **Linux with Python ≥ 3.10.**
 - **A CloudVision service-account token**, from an optional [token file](#token-file) or the `CLOUDVISION_TOKEN` environment variable. The token value is never accepted as an argument (only a token file's path is) and never logged.
 - **To run the lab:** [Containerlab](https://containerlab.dev) and a cEOS image that you obtain and import yourself (for example `ceos:4.35.7.2M`). ddnetmirror does not download images, and never runs Containerlab: you deploy the generated lab yourself, with the privileges your Containerlab installation needs.
+
+### CloudVision service account
+
+**Use a dedicated, read-only service-account token.** ddnetmirror never writes to CloudVision, so it needs no admin or write permission. It only reads:
+
+- device inventory (hostnames, serials, EOS versions) and device tag assignments, via the Resource APIs (`inventory.v1`, `tag.v2`);
+- running configs, via the compliance service's `GetConfig`;
+- LLDP state, via the telemetry Connector (`Sysdb/l2discovery/lldp/status`), only with `--lldp` (always with `ddn build`).
+
+Create a service account just for ddnetmirror and give it a role with read-only access to what it needs; a custom, restricted role is fine. ddnetmirror does not document a minimal permission set for any CloudVision release, so check the role in your environment on a small selection: `--list` exercises inventory and tags, a collection with `--lldp` everything. Give the token a reasonable expiry date, use one token per environment ([below](#one-token-file-per-environment)), never commit or paste it, and revoke it when it is no longer needed.
 
 ### Token file
 
@@ -50,7 +62,7 @@ f=~/.config/ddnetmirror/token; touch "$f" && chmod 600 "$f" && cat > "$f"   # pa
   - in a directory that group or others can write to.
 
   Mode 0600 for the file and 0700 for the directory are recommended.
-- **No encryption.** File permissions are not encrypted storage: anyone with your account, or root, can read the token. Prefer a scoped, read-only, short-lived service-account token.
+- **No encryption.** File permissions are not encrypted storage: anyone with your account, or root, can read the token. Hence the scoped, read-only, expiring token [above](#cloudvision-service-account).
 
 ### One token file per environment
 
@@ -468,9 +480,7 @@ Rules are plain text editing:
 
 ## Known limitations
 
-- **Live CVP/CVaaS compatibility is unverified** (#7). The CloudVision calls follow the `cloudvision` Python library's source and examples.
-  - The code is tested against stubbed responses (`pytest`).
-  - It was also tested in a human-run synthetic test drive (#22): Containerlab 0.83.0 with `ceos:4.35.7.2M`, four nodes, BGP and ECMP up, and the slash-form link `Ethernet49/1` ↔ `eth49_1` passing traffic.
+- **Tested scope only.** Live testing covered on-prem CVP 2026.3.0 and CVaaS (#7); other CloudVision releases are untested. The CloudVision calls follow the `cloudvision` Python library's source and examples, and the code is also tested against stubbed responses (`pytest`).
 - **EOS eligibility is the system `eos` tag.** EOS devices without CloudVision's system-generated `eos` tag are never selected (see [Only EOS devices are selected](#only-eos-devices-are-selected)). Verified by owner observation on on-prem CVP and CVaaS only.
 - **Image choice is by version string only.** `--image IMAGE` applies to every node. Without it, local `ceos` tags are matched to inventory versions (see above), with no knowledge of platforms or compatibility. You can always override a node in the YAML by hand.
 - **LLDP matching is conservative.** A neighbour becomes a link only if:
